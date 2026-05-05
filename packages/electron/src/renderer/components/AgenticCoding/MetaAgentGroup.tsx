@@ -30,6 +30,12 @@ interface MetaAgentGroupProps {
   onMultiSelect?: (e: React.MouseEvent) => void;
   activeSessionId: string | null;
   onSessionSelect: (sessionId: string, e: Pick<React.MouseEvent, 'metaKey' | 'ctrlKey' | 'shiftKey'>) => void;
+  onSessionArchive?: (sessionId: string) => void;
+  onSessionUnarchive?: (sessionId: string) => void;
+  onSessionDelete?: (sessionId: string) => void;
+  onSessionPinToggle?: (sessionId: string, isPinned: boolean) => void;
+  onSessionBranch?: (sessionId: string) => void;
+  onWorktreeArchive?: (worktreeId: string) => void;
 }
 
 /**
