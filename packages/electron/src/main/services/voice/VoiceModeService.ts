@@ -245,17 +245,29 @@ export function initVoiceModeService() {
         throw new Error('Session ID is required for voice mode');
       }
 
-      // Check microphone permission on macOS
+      // Check microphone permission on macOS, requesting it lazily if needed.
+      // The audio-input entitlement was added (see #22, #214) so we can now
+      // call askForMediaAccess at the moment the user explicitly turns on
+      // Voice Mode. The session permission handler in main/index.ts gates any
+      // earlier renderer-side requests, so no prompt fires before this point.
       if (process.platform === 'darwin') {
-        const micStatus = systemPreferences.getMediaAccessStatus('microphone');
-        console.log('[VoiceModeService] Microphone access status:', micStatus);
+        let micStatus = systemPreferences.getMediaAccessStatus('microphone');
+        console.log('[VoiceModeService] Microphone access status (initial):', micStatus);
+
+        if (micStatus === 'not-determined') {
+          // First-time consent: triggers the macOS system permission dialog.
+          // Returns true if user grants, false if denied. The status check
+          // below covers the denied case uniformly.
+          const granted = await systemPreferences.askForMediaAccess('microphone');
+          console.log('[VoiceModeService] askForMediaAccess result:', granted);
+          micStatus = systemPreferences.getMediaAccessStatus('microphone');
+        }
 
         if (micStatus !== 'granted') {
-          // NOTE: We cannot programmatically request microphone permission because
-          // the app intentionally omits the audio-input entitlement to prevent
-          // permission prompts when Claude Agent SDK spawns subprocesses.
-          // Users must manually grant permission in System Settings.
-          throw new Error('Microphone access is required for Voice Mode.\n\nPlease manually grant permission:\n1. Open System Settings\n2. Go to Privacy & Security > Microphone\n3. Enable access for Nimbalyst\n4. Try again');
+          // User has either denied or restricted access. macOS does not
+          // re-prompt after a denial, so the only path forward is System
+          // Settings.
+          throw new Error('Microphone access is required for Voice Mode.\n\nPlease grant permission:\n1. Open System Settings\n2. Go to Privacy & Security > Microphone\n3. Enable access for Nimbalyst\n4. Try again');
         }
       }
 

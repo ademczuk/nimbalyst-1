@@ -22,9 +22,14 @@
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>
-    <!-- NOTE: Microphone entitlement intentionally omitted -->
-    <!-- Without this entitlement, the app won't trigger microphone permission prompts -->
-    <!-- when Claude Agent SDK spawns subprocesses. Users who want Voice Mode will -->
-    <!-- need to manually grant microphone permission in System Settings. -->
+    <!-- Microphone access for Voice Mode. The previous concern was that simply -->
+    <!-- holding this entitlement would trigger an immediate permission prompt -->
+    <!-- on app launch (e.g. when Claude Agent SDK spawned subprocesses). That -->
+    <!-- is gated separately by the session permission handler in main/index.ts -->
+    <!-- which denies media (audio) requests until the user has explicitly -->
+    <!-- granted via Voice Mode. So this entitlement only opens the door; the -->
+    <!-- prompt itself fires lazily on first Voice Mode connect. See #22, #214. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>
