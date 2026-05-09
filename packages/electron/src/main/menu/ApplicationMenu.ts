@@ -754,8 +754,53 @@ export async function createApplicationMenu() {
                     }
                 },
                 {
+                    // Hidden alias matching the literal Shift+= keystroke that
+                    // produces `+` on QWERTY layouts; some keyboard drivers
+                    // report this with the Shift modifier still set, so the
+                    // bare `CmdOrCtrl+=` binding above doesn't always catch it.
+                    label: 'Zoom In (Shift+=)',
+                    accelerator: 'CmdOrCtrl+Shift+=',
+                    visible: false,
+                    click: async () => {
+                        const focused = getFocusedWindow();
+                        if (focused) {
+                            const currentZoom = focused.webContents.getZoomFactor();
+                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                        }
+                    }
+                },
+                {
+                    // Hidden alias for the numeric keypad `+`. Reported as a
+                    // distinct keycode from the main-row `+`, so neither
+                    // CmdOrCtrl+Plus nor CmdOrCtrl+= pick it up.
+                    label: 'Zoom In (numpad)',
+                    accelerator: 'CmdOrCtrl+numadd',
+                    visible: false,
+                    click: async () => {
+                        const focused = getFocusedWindow();
+                        if (focused) {
+                            const currentZoom = focused.webContents.getZoomFactor();
+                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                        }
+                    }
+                },
+                {
                     label: 'Zoom Out',
                     accelerator: KeyboardShortcuts.view.zoomOut,
+                    click: async () => {
+                        const focused = getFocusedWindow();
+                        if (focused) {
+                            const currentZoom = focused.webContents.getZoomFactor();
+                            focused.webContents.setZoomFactor(Math.max(0.5, currentZoom - 0.1));
+                        }
+                    }
+                },
+                {
+                    // Hidden alias for the numeric keypad `-`. Symmetric with
+                    // the numpad zoom-in binding above.
+                    label: 'Zoom Out (numpad)',
+                    accelerator: 'CmdOrCtrl+numsub',
+                    visible: false,
                     click: async () => {
                         const focused = getFocusedWindow();
                         if (focused) {
