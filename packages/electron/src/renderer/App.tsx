@@ -149,7 +149,7 @@ import {
   electronStorageBackend,
   initializeElectronStorageBackend,
 } from './extensions/panels';
-import { setStorageBackend } from '@nimbalyst/runtime';
+import { setStorageBackend, getExtensionEditorAPI } from '@nimbalyst/runtime';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { extensionPanelAIContextAtom } from './store/atoms/extensionPanels';
 import { setDiffTreeGroupByDirectoryAtom, setAgentFileScopeModeAtom, setHiddenGutterButtonsAtom, hydrateFileGutterCollapsedAtom } from './store/atoms/projectState';
@@ -558,6 +558,11 @@ export default function App() {
         },
         // Expose DocumentModelRegistry for multi-editor coordination tests
         documentModelRegistry: DocumentModelRegistry,
+        // Look up an extension editor's imperative API by file path. Replaces
+        // the legacy per-extension window globals (e.g.
+        // window.__excalidraw_getEditorAPI) that E2E tests used to poke
+        // editors directly.
+        getExtensionEditorAPI: (filePath: string) => getExtensionEditorAPI(filePath),
         // Open a file in a real AgentMode workstream editor tab (for multi-editor
         // tests). Creates a real session via IPC, selects it as the active
         // workstream, adds the file to openFilePaths, and switches layoutMode
