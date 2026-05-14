@@ -228,8 +228,34 @@ export function initSessionStateListeners(): () => void {
     // completed while its project was hidden.
     //
     // We still require an owned workspacePath (event-carried or registry
-    // hit). Falling back to the active project's path would silently process
-    // events for unrelated sessions whose owner is unknown to this window.
+    // hit) for the non-terminal events (started / streaming / waiting),
+    // because those drive workspace-scoped state like
+    // `markSessionStreamingAtom` which needs a real workspacePath to
+    // bucket per project. Falling back to the active project's path would
+    // silently process started/streaming for unrelated sessions.
+    //
+    // For TERMINAL events (`session:completed` / `error` / `interrupted`)
+    // we instead clear `sessionProcessingAtom(sessionId)` unconditionally
+    // BEFORE the null-guard below. The processing atom is keyed only by
+    // sessionId (no workspace component) and represents "is this turn
+    // still running." The main process already routes the event to this
+    // window, so a missing workspacePath here means the session isn't yet
+    // in the registry — typically a startup race or post-HMR
+    // re-evaluation where the lifecycle event arrives before the session
+    // list has been hydrated. Dropping the terminal event silently in
+    // that case left the "Thinking…" indicator pinned forever; the user
+    // had to click Cancel to clear it. arcenik86 reported exactly this
+    // on extended-thinking sessions where slow turns increase the chance
+    // of the race. See #116.
+    const isTerminalEvent =
+      type === 'session:completed' ||
+      type === 'session:error' ||
+      type === 'session:interrupted';
+    if (isTerminalEvent) {
+      store.set(sessionProcessingAtom(sessionId), false);
+      store.set(sessionHasPendingInteractivePromptAtom(sessionId), false);
+    }
+
     if (!ownedWorkspacePath) {
       return;
     }

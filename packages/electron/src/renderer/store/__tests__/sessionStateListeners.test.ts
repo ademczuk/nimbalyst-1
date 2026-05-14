@@ -121,6 +121,33 @@ describe.each([
     expect(store.get(sessionHasPendingInteractivePromptAtom(sid))).toBe(false);
     expect(store.get(sessionProcessingAtom(sid))).toBe(false);
   });
+
+  // Regression coverage for nimbalyst#116. arcenik86 reported the "Thinking…"
+  // indicator stayed pinned after the assistant finished and only cleared on
+  // Cancel. Root cause: commit 4e5dd9e7 (fix for #231) added a workspace-routed
+  // null-guard that silently dropped terminal events when the session was not
+  // yet in `sessionRegistryAtom` — a startup race or post-HMR re-evaluation
+  // where the lifecycle event arrives before the session list is hydrated.
+  // Extended-thinking sessions (longer turns) reproduce the race more often.
+  //
+  // After the fix, terminal events MUST clear `sessionProcessingAtom` even
+  // when (a) `workspacePath` is missing from the event payload AND (b) the
+  // registry has no entry for the session yet. Both conditions are required
+  // to exercise the regression — having either one populated would resolve
+  // `ownedWorkspacePath` and avoid the null-guard.
+  it(`clears sessionProcessingAtom even when workspacePath is missing AND session is not in registry (regression #116)`, () => {
+    const sid = uniqueSessionId(`terminal-${type}-no-workspace`);
+    store.set(sessionProcessingAtom(sid), true);
+    store.set(sessionHasPendingInteractivePromptAtom(sid), true);
+
+    const handler = handlers.get('ai-session-state:event');
+    // No workspacePath on the event AND no registry entry for this sessionId.
+    // Prior to the fix this combination dropped the event silently.
+    handler!({ type, sessionId: sid });
+
+    expect(store.get(sessionProcessingAtom(sid))).toBe(false);
+    expect(store.get(sessionHasPendingInteractivePromptAtom(sid))).toBe(false);
+  });
 });
 
 describe('direct prompt events: AskUserQuestion', () => {
