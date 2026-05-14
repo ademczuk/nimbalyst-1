@@ -28,9 +28,11 @@ function getDurationCategory(durationMs: number): string {
 }
 
 /**
- * Classify update errors for analytics
+ * Classify update errors for analytics and toast handling. Exported for
+ * focused unit testing of the new `squirrel_install_disabled` branch added
+ * for #245 without standing up the full AutoUpdaterService.
  */
-function classifyUpdateError(error: Error): string {
+export function classifyUpdateError(error: Error): string {
   const message = error.message.toLowerCase();
   if (message.includes('network') || message.includes('enotfound') || message.includes('timeout') || message.includes('econnrefused')) {
     return 'network';
@@ -43,6 +45,13 @@ function classifyUpdateError(error: Error): string {
   }
   if (message.includes('signature') || message.includes('verify') || message.includes('certificate') || message.includes('cert')) {
     return 'signature';
+  }
+  // Squirrel.Mac NSException surfaced after the download proxy is torn down
+  // before `quitAndInstall` runs. Classify it as its own type so the renderer
+  // toast can show a "restart manually" instruction instead of the generic
+  // failure message that previously left users stuck. See #245.
+  if (message.includes('command is disabled') || message.includes('cannot be executed')) {
+    return 'squirrel_install_disabled';
   }
   return 'unknown';
 }
@@ -636,24 +645,26 @@ export class AutoUpdaterService {
 
   private async checkAndDownloadLatest() {
     try {
-      log.info('Re-checking for latest version before download...');
-
-      // Check for the absolute latest version
-      const result = await autoUpdater.checkForUpdates();
-
-      if (result && result.updateInfo) {
-        log.info(`Latest version found: ${result.updateInfo.version}, downloading...`);
-
-        // Download the latest version that was just checked
-        // Progress events will update the toast automatically
-        await autoUpdater.downloadUpdate();
-      } else {
-        log.info('No update found during re-check');
-        // Show up-to-date toast (rare edge case - update was released then pulled)
-        this.sendToFrontmostWindow('update-toast:up-to-date');
-      }
+      // Previously this method called `autoUpdater.checkForUpdates()` immediately
+      // before `downloadUpdate()` to "get the absolute latest version" - but on
+      // macOS each `checkForUpdates()` call spins up a new Squirrel.Mac proxy
+      // server, and the new proxy tears down the prior one that the original
+      // `update-available` event had already handed Squirrel's `SQRLUpdater` a
+      // reference to. By the time `quitAndInstall` fires, Squirrel's internal
+      // downloader points at a closed proxy and rejects the install with
+      // "The command is disabled and cannot be executed." adambhenry hit
+      // exactly this on macOS arm64 (#245); the race is sensitive to process
+      // scheduling so arm64 reproduces it more reliably than x86_64.
+      //
+      // The `update-available` event has already populated `pendingUpdateInfo`
+      // with the version that triggered this download path. Go straight to
+      // `downloadUpdate()` and let the existing event handlers keep the toast
+      // in sync. The single-check flow does not break the proxy lifecycle and
+      // matches how Squirrel.Mac is documented to be driven.
+      log.info('Starting update download (single-check path to avoid Squirrel.Mac proxy race)...');
+      await autoUpdater.downloadUpdate();
     } catch (error) {
-      log.error('Failed to check and download latest:', error);
+      log.error('Failed to download latest:', error);
       this.sendToFrontmostWindow('update-toast:error', {
         message: error instanceof Error ? error.message : 'Failed to download the update'
       });
