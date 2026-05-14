@@ -91,6 +91,8 @@ export class CodexRawParser implements IRawMessageParser {
           descriptors.push({
             type: 'user_message',
             text: content,
+            mode: (msg.metadata?.mode as 'agent' | 'planning') ?? 'agent',
+            attachments: msg.metadata?.attachments as any,
             createdAt: msg.createdAt,
           });
         }

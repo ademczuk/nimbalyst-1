@@ -795,7 +795,9 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     const isMetaAgent = agentRole === 'meta-agent';
     const systemPrompt = this.buildSystemPrompt(documentContext, isMetaAgent);
     const { userMessageAddition, messageWithContext } = buildUserMessageAddition(message, documentContext);
-    const unsupportedAttachmentHints = attachments?.filter((attachment) => attachment.type !== 'image');
+    const unsupportedAttachmentHints = attachments?.filter(
+      (attachment) => attachment.type !== 'image' && attachment.type !== 'document'
+    );
     const messageWithAttachmentHints = this.appendAttachmentHints(messageWithContext, unsupportedAttachmentHints);
 
     // Emit prompt additions for UI

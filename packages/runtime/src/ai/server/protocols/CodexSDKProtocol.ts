@@ -11,6 +11,7 @@
  * - Event parsing and conversion
  */
 
+import { buildDocumentAttachmentPromptText } from '../providers/codex/documentAttachmentPrompt';
 import {
   AgentProtocol,
   ProtocolSession,
@@ -167,7 +168,7 @@ export class CodexSDKProtocol implements AgentProtocol {
     const rawOptions = session.raw?.options as { abortSignal?: AbortSignal } | undefined;
 
     // Build the prompt (system prompt is now in thread options as developer_instructions)
-    const input = this.buildInput(message);
+    const input = await this.buildInput(message);
 
     // Track cumulative text for delta extraction
     let lastCumulativeText = '';
@@ -437,20 +438,41 @@ export class CodexSDKProtocol implements AgentProtocol {
    * NOTE: System prompts are now passed via developer_instructions in thread options,
    * not injected into the user message. This is the proper Codex SDK approach.
    */
-  private buildInput(message: ProtocolMessage): CodexInput {
-    const imageAttachments = (message.attachments || [])
-      .filter((attachment) => attachment.type === 'image' && attachment.filepath);
+  private async buildInput(message: ProtocolMessage): Promise<CodexInput> {
+    const attachments = message.attachments || [];
+    const hasStructuredAttachments = attachments.some(
+      (attachment) => (attachment.type === 'image' || attachment.type === 'document') && attachment.filepath
+    );
 
-    if (imageAttachments.length === 0) {
+    if (!hasStructuredAttachments) {
       return message.content;
     }
 
-    return [
+    const input: Array<{ type: 'text'; text: string } | { type: 'local_image'; path: string }> = [
       { type: 'text', text: message.content },
-      ...imageAttachments.map((attachment) => ({
-        type: 'local_image' as const,
-        path: attachment.filepath,
-      })),
     ];
+
+    for (const attachment of attachments) {
+      if (!attachment.filepath) {
+        continue;
+      }
+
+      if (attachment.type === 'document') {
+        input.push({
+          type: 'text',
+          text: await buildDocumentAttachmentPromptText(attachment),
+        });
+        continue;
+      }
+
+      if (attachment.type === 'image') {
+        input.push({
+          type: 'local_image',
+          path: attachment.filepath,
+        });
+      }
+    }
+
+    return input;
   }
 }

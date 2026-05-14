@@ -1,3 +1,6 @@
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenAICodexProvider } from '../OpenAICodexProvider';
 import * as codexBinaryPath from '../codex/codexBinaryPath';
@@ -450,6 +453,82 @@ describe('OpenAICodexProvider', () => {
         },
       }
     );
+  });
+
+  it('does not append unsupported-attachment hints for text documents', async () => {
+    const tmpFile = path.join(os.tmpdir(), `nimbalyst-codex-provider-doc-${Date.now()}.txt`);
+    await fs.writeFile(tmpFile, 'provider attachment body', 'utf-8');
+
+    const createSession = vi.fn(async () => ({
+      id: 'thread-document-forward',
+      platform: 'codex-sdk',
+      raw: { thread: { runStreamed: vi.fn() } },
+    }));
+    const sendMessage = vi.fn((_session, _message) => createAsyncEventStream([
+      {
+        type: 'complete',
+        content: 'done',
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
+    ]));
+    const protocol = {
+      platform: 'codex-sdk',
+      createSession,
+      resumeSession: vi.fn(),
+      forkSession: vi.fn(),
+      sendMessage,
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+    } as any;
+
+    const provider = new OpenAICodexProvider(
+      { apiKey: 'test-key' },
+      {
+        protocol,
+      }
+    );
+
+    await provider.initialize({
+      apiKey: 'test-key',
+      model: 'openai-codex:gpt-5',
+    });
+
+    const attachments = [
+      {
+        id: 'doc-1',
+        filename: 'notes.txt',
+        filepath: tmpFile,
+        mimeType: 'text/plain',
+        size: 24,
+        type: 'document' as const,
+        addedAt: Date.now(),
+      },
+    ];
+
+    try {
+      for await (const _chunk of provider.sendMessage(
+        'Review @notes.txt',
+        undefined,
+        'session-document-forward',
+        [],
+        process.cwd(),
+        attachments
+      )) {
+        // drain
+      }
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          content: expect.not.stringContaining('Attached files:'),
+          attachments,
+          sessionId: 'session-document-forward',
+          mode: 'agent',
+        })
+      );
+    } finally {
+      await fs.unlink(tmpFile).catch(() => {});
+    }
   });
 
   it('passes packaged codexPathOverride into SDK construction when available', async () => {
