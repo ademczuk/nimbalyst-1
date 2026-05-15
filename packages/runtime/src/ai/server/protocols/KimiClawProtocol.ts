@@ -254,6 +254,22 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
   const d = raw.data;
 
   switch (raw.type) {
+    case 'orchestrator.started':
+      events.push({
+        type: 'text',
+        content: `Swarm ${(d.swarm_id as string)?.slice(0, 12)} started`,
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+
+    case 'swarm.configured':
+      events.push({
+        type: 'text',
+        content: `Swarm configured — max ${d.max_agents} agents, ${d.max_steps} steps${d.parallel ? ' (parallel)' : ''}`,
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+
     case 'agent.started':
       events.push({
         type: 'text',
