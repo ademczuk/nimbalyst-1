@@ -12,7 +12,6 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { ChatAttachment } from '../types';
 import {
   AgentProtocol,
   ProtocolSession,
@@ -20,7 +19,6 @@ import {
   ProtocolMessage,
   ProtocolEvent,
   ProtocolEventType,
-  ToolResult,
 } from './ProtocolInterface';
 
 // ---------------------------------------------------------------------------
@@ -228,10 +226,6 @@ export class KimiClawError extends Error {
 // ---------------------------------------------------------------------------
 // Event parser: KCS SSE event -> nimbalyst canonical events
 // ---------------------------------------------------------------------------
-
-const CANONICAL_EVENT_OVERRIDES: Partial<Record<string, ProtocolEventType>> = {
-  // Core mapping overrides - most events default to 'raw_event'
-};
 
 export function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
   const events: ProtocolEvent[] = [];
