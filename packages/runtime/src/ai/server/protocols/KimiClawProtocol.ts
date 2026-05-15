@@ -35,6 +35,7 @@ export interface KimiClawSwarmOptions {
   max_agents?: number;
   max_steps?: number;
   max_parallel?: number;
+  mcp_servers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 }
 
 export interface KimiClawSessionData {
@@ -315,6 +316,16 @@ export function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       break;
 
     case 'agent.started':
+      // Fix B: Agent progress placeholder -- KCS emits full blobs, not tokens
+      events.push({
+        type: 'text',
+        content: `[Agent ${raw.data.name || (raw.data.agent_id as string).slice(0, 8)}] Starting...`,
+        metadata: {
+          agentId: raw.data.agent_id,
+          kind: 'agent_progress',
+          phase: 'started',
+        },
+      });
       events.push({
         type: 'tool_call',
         toolCall: {
@@ -356,15 +367,30 @@ export function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
     case 'agent.phase_changed':
       events.push({
         type: 'text',
-        content: `[Agent ${(raw.data.agent_id as string).slice(0, 8)}] Phase: ${raw.data.phase}`,
+        content: `[Agent ${raw.data.name || (raw.data.agent_id as string).slice(0, 8)}] ${raw.data.phase}...`,
         metadata: {
           agentId: raw.data.agent_id,
+          kind: 'agent_progress',
           phase: raw.data.phase,
         },
       });
       break;
 
     case 'agent.completed':
+      // Fix B: Emit output as text chunk for streaming UX
+      if (raw.data.output) {
+        const outputText = typeof raw.data.output === 'string' ? raw.data.output : JSON.stringify(raw.data.output);
+        const syntheticBadge = raw.data.synthetic_output_used ? ' [SYNTH -- tier 5 fallback]' : '';
+        events.push({
+          type: 'text',
+          content: outputText + syntheticBadge,
+          metadata: {
+            agentId: raw.data.agent_id,
+            kind: 'agent_output',
+            synthetic: raw.data.synthetic_output_used,
+          },
+        });
+      }
       events.push({
         type: 'tool_result',
         toolResult: {
@@ -546,6 +572,9 @@ export class KimiClawProtocol implements AgentProtocol {
     return this.createSession(options);
   }
 
+  // Per-session state: last deliverable for conversational continuity (Fix A)
+  private sessionDeliverables = new Map<string, string>();
+
   async *sendMessage(
     session: ProtocolSession,
     message: ProtocolMessage,
@@ -553,7 +582,25 @@ export class KimiClawProtocol implements AgentProtocol {
     const sessionData = session.raw?.options as KimiClawSessionData | undefined;
     const swarmOpts: KimiClawSwarmOptions = sessionData?.swarmDefaults || {};
 
-    const { swarmId } = await this.transport.dispatchSwarm(message.content, swarmOpts);
+    // Fix A: Conversational continuity -- auto-stitch prior deliverable
+    const priorDeliverable = this.sessionDeliverables.get(session.id);
+    let taskWithContext = message.content;
+    if (priorDeliverable) {
+      taskWithContext = `[Prior context from previous swarm]:\n\n${priorDeliverable}\n\n---\n\nNew task: ${message.content}`;
+      yield {
+        type: 'text',
+        content: '[Auto-continuing from prior deliverable...]',
+        metadata: { kind: 'context_stitch' },
+      };
+    }
+
+    // Fix D: MCP passthrough -- inject MCP servers from session config
+    const mcpServers = sessionData?.mcpServers;
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      swarmOpts.mcp_servers = mcpServers;
+    }
+
+    const { swarmId } = await this.transport.dispatchSwarm(taskWithContext, swarmOpts);
 
     yield {
       type: 'text',
@@ -562,41 +609,48 @@ export class KimiClawProtocol implements AgentProtocol {
     };
 
     const ac = new AbortController();
-    let terminalReached = false;
+    let cancelled = false;
 
     try {
       for await (const raw of this.transport.streamEvents(swarmId, ac.signal)) {
-        // Emit mapped canonical events
-        for (const ev of parseSwarmEvent(raw)) {
-          yield ev;
+        // Cancel UX gate: drop post-cancel events (stragglers)
+        if (cancelled) continue;
+
+        if (raw.type === 'coordinate.cancelled') {
+          cancelled = true;
+          yield { type: 'text', content: '[Swarm cancelled by user]', metadata: { kind: 'cancel' } };
+          break;
         }
 
         if (
           raw.type === 'coordinate.completed' ||
-          raw.type === 'coordinate.error' ||
-          raw.type === 'coordinate.cancelled'
+          raw.type === 'coordinate.error'
         ) {
-          terminalReached = true;
           break;
+        }
+
+        // Emit mapped canonical events
+        for (const ev of parseSwarmEvent(raw)) {
+          yield ev;
         }
       }
 
       // After SSE ends, fetch final deliverable from snapshot
-      if (!terminalReached) {
-        try {
-          const snap = await this.transport.getSnapshot(swarmId);
-          const deliverable = snap.deliverable || snap.result;
-          if (deliverable) {
-            const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
-            yield {
-              type: 'text',
-              content: text,
-              metadata: { final: true },
-            };
-          }
-        } catch {
-          // Snapshot may not be available if swarm was cancelled
+      try {
+        const snap = await this.transport.getSnapshot(swarmId);
+        const deliverable = snap.deliverable || snap.result;
+        if (deliverable) {
+          const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
+          yield {
+            type: 'text',
+            content: text,
+            metadata: { final: true },
+          };
+          // Fix A: Store deliverable for next turn's context
+          this.sessionDeliverables.set(session.id, text);
         }
+      } catch {
+        // Snapshot may not be available if swarm was cancelled
       }
 
       yield { type: 'complete', metadata: { swarmId } };
