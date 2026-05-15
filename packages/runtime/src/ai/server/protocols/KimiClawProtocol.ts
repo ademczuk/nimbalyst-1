@@ -1,8 +1,8 @@
 /**
  * KimiClaw Protocol
  *
- * HTTP+SSE protocol for KimiClawSwarm.
- * Stubs for now — transport filled in Slice 2, SSE parser in Slice 3.
+ * HTTP+SSE transport for KimiClawSwarm (KCS) — local Flask server at 127.0.0.1:9643.
+ * Uses node-fetch + tough-cookie (not Electron net.request).
  */
 
 import {
@@ -13,6 +13,10 @@ import {
   ProtocolEvent,
 } from './ProtocolInterface';
 
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
 export interface KimiClawSwarmOptions {
   persona_mode?: boolean;
   max_agents?: number;
@@ -21,18 +25,255 @@ export interface KimiClawSwarmOptions {
   mcp_servers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 }
 
+export interface KimiClawSessionData {
+  endpoint: string;
+  authMode: 'cookie' | 'bearer';
+  username?: string;
+  password?: string;
+  bearerToken?: string;
+  swarmDefaults: KimiClawSwarmOptions;
+}
+
+// ---------------------------------------------------------------------------
+// Transport interface
+// ---------------------------------------------------------------------------
+
+export interface KimiClawTransport {
+  open(options: SessionOptions): Promise<void>;
+  close(): Promise<void>;
+  dispatchSwarm(task: string, swarmOpts: KimiClawSwarmOptions): Promise<{ swarmId: string }>;
+  streamEvents(swarmId: string, signal: AbortSignal): AsyncIterable<RawKimiClawEvent>;
+  cancelSwarm(swarmId: string, reason: string): Promise<void>;
+  getSnapshot(swarmId: string): Promise<Record<string, unknown>>;
+  getAgents(swarmId: string): Promise<Record<string, unknown>>;
+  getArtifact(swarmId: string, name: string): Promise<Buffer>;
+  healthCheck(): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------
+// Raw event types
+// ---------------------------------------------------------------------------
+
+export interface RawKimiClawEvent {
+  type: string;
+  data: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP transport implementation (node-fetch + tough-cookie)
+// ---------------------------------------------------------------------------
+
+// Lazy-load node-fetch and tough-cookie so the runtime doesn't crash
+// if they're missing (they're devDependencies in the runtime package).
+let _fetch: typeof import('node-fetch').default | null = null;
+let _CookieJar: typeof import('tough-cookie').CookieJar | null = null;
+
+async function getFetch() {
+  if (!_fetch) {
+    const nf = await import('node-fetch');
+    _fetch = nf.default as any;
+  }
+  return _fetch!;
+}
+
+async function getCookieJar() {
+  if (!_CookieJar) {
+    const tc = await import('tough-cookie');
+    _CookieJar = tc.CookieJar;
+  }
+  return _CookieJar!;
+}
+
+export class KimiClawHttpTransport implements KimiClawTransport {
+  private cookieJar: import('tough-cookie').CookieJar | null = null;
+  private loggedIn: boolean = false;
+
+  constructor(
+    private endpoint: string,
+    private auth: {
+      mode: 'cookie' | 'bearer';
+      username?: string;
+      password?: string;
+      bearerToken?: string;
+    },
+  ) {}
+
+  async open(_options: SessionOptions): Promise<void> {
+    if (this.auth.mode === 'cookie') {
+      const CookieJar = await getCookieJar();
+      this.cookieJar = new CookieJar();
+      await this.login();
+    }
+  }
+
+  async close(): Promise<void> {
+    this.cookieJar = null;
+    this.loggedIn = false;
+  }
+
+  private async login(): Promise<void> {
+    const fetch = await getFetch();
+    const r = await fetch(`${this.endpoint}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: this.auth.username || 'admin',
+        password: this.auth.password || 'admin',
+      }),
+    });
+    if (!r.ok) throw new KimiClawError(`login failed: ${r.status} ${await r.text()}`);
+    const setCookie = r.headers.get('set-cookie');
+    if (setCookie && this.cookieJar) {
+      await this.cookieJar.setCookie(setCookie, this.endpoint);
+    }
+    this.loggedIn = true;
+  }
+
+  async dispatchSwarm(task: string, swarmOpts: KimiClawSwarmOptions): Promise<{ swarmId: string }> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task, options: swarmOpts }),
+    });
+    if (!r.ok) throw new KimiClawError(`dispatch failed: ${r.status} ${await r.text()}`);
+    const body = await r.json() as Record<string, unknown>;
+    return { swarmId: body.swarm_id as string };
+  }
+
+  async *streamEvents(swarmId: string, signal: AbortSignal): AsyncIterable<RawKimiClawEvent> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}/events`, { signal });
+    if (!r.ok) throw new KimiClawError(`events failed: ${r.status}`);
+    if (!r.body) return;
+
+    const reader = (r.body as any).getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (signal.aborted) break;
+
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          if (frame.startsWith(':')) continue; // keepalive
+
+          const lines = frame.split('\n');
+          const evType = lines.find(l => l.startsWith('event: '))?.slice(7);
+          const dataLine = lines.find(l => l.startsWith('data: '))?.slice(6);
+          if (!evType || !dataLine) continue;
+
+          try {
+            yield { type: evType, data: JSON.parse(dataLine) };
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async cancelSwarm(swarmId: string, reason: string): Promise<void> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}/cancel`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!r.ok) throw new KimiClawError(`cancel failed: ${r.status}`);
+  }
+
+  async getSnapshot(swarmId: string): Promise<Record<string, unknown>> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}`, { headers });
+    if (!r.ok) throw new KimiClawError(`snapshot failed: ${r.status}`);
+    return r.json() as Promise<Record<string, unknown>>;
+  }
+
+  async getAgents(swarmId: string): Promise<Record<string, unknown>> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}/agents`, { headers });
+    if (!r.ok) throw new KimiClawError(`agents failed: ${r.status}`);
+    return r.json() as Promise<Record<string, unknown>>;
+  }
+
+  async getArtifact(swarmId: string, name: string): Promise<Buffer> {
+    const fetch = await getFetch();
+    const headers = await this.buildHeaders();
+    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}/artifact/${name}`, { headers });
+    if (!r.ok) throw new KimiClawError(`artifact failed: ${r.status}`);
+    const buf = await r.buffer();
+    return buf;
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const fetch = await getFetch();
+      const r = await fetch(`${this.endpoint}/api/auth-check`);
+      return r.status === 200 || r.status === 401; // 401 means engine alive, not authenticated
+    } catch {
+      return false;
+    }
+  }
+
+  private async buildHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+    if (this.auth.mode === 'bearer' && this.auth.bearerToken) {
+      headers['Authorization'] = `Bearer ${this.auth.bearerToken}`;
+    } else if (this.auth.mode === 'cookie' && this.cookieJar) {
+      const cookies = await this.cookieJar.getCookieString(this.endpoint);
+      if (cookies) headers['Cookie'] = cookies;
+    }
+    return headers;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Error
+// ---------------------------------------------------------------------------
+
+export class KimiClawError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KimiClawError';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Protocol
+// ---------------------------------------------------------------------------
+
 export class KimiClawProtocol implements AgentProtocol {
   readonly platform = 'kimiclaw';
-
-  // Fix A: conversational continuity — last deliverable per session
+  private transport: KimiClawTransport;
+  // Fix A: conversational continuity
   private sessionDeliverables = new Map<string, string>();
 
+  constructor(transport?: KimiClawTransport) {
+    this.transport = transport || new KimiClawHttpTransport('http://127.0.0.1:9643', { mode: 'cookie' });
+  }
+
   async createSession(options: SessionOptions): Promise<ProtocolSession> {
+    await this.transport.open(options);
     return { id: crypto.randomUUID(), platform: this.platform, raw: { options } };
   }
 
   async resumeSession(sessionId: string, options: SessionOptions): Promise<ProtocolSession> {
-    return this.createSession(options);
+    await this.transport.open(options);
+    return { id: crypto.randomUUID(), platform: this.platform, raw: { options, resumedFrom: sessionId } };
   }
 
   async forkSession(sessionId: string, options: SessionOptions): Promise<ProtocolSession> {
@@ -40,21 +281,78 @@ export class KimiClawProtocol implements AgentProtocol {
   }
 
   /**
-   * Stub: filled in Slice 3.
+   * Stub — filled in Slice 3 with SSE parser + canonical event mapping.
    */
   async *sendMessage(
     session: ProtocolSession,
     message: ProtocolMessage,
   ): AsyncIterable<ProtocolEvent> {
-    yield { type: 'text', content: '[KimiClawProtocol] sendMessage not yet implemented' };
-    yield { type: 'complete', metadata: {} };
+    const sessionData = session.raw?.options as KimiClawSessionData | undefined;
+    const swarmOpts: KimiClawSwarmOptions = sessionData?.swarmDefaults || {};
+
+    // Fix A: conversational continuity — auto-stitch prior deliverable
+    const priorDeliverable = this.sessionDeliverables.get(session.id);
+    let taskWithContext = message.content;
+    if (priorDeliverable) {
+      taskWithContext = `[Prior context from previous swarm]:\n\n${priorDeliverable}\n\n---\n\nNew task: ${message.content}`;
+      yield { type: 'text', content: '[Continuing from prior deliverable]', metadata: { kind: 'context_stitch' } };
+    }
+
+    // Fix D: MCP passthrough
+    const mcpServers = sessionData?.mcpServers;
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      swarmOpts.mcp_servers = mcpServers;
+    }
+
+    const { swarmId } = await this.transport.dispatchSwarm(taskWithContext, swarmOpts);
+    yield { type: 'text', content: `Swarm ${swarmId} dispatched`, metadata: { providerSessionId: swarmId } };
+
+    // Cancel UX gate
+    let cancelled = false;
+
+    const ac = new AbortController();
+    try {
+      for await (const raw of this.transport.streamEvents(swarmId, ac.signal)) {
+        if (cancelled) continue;
+
+        if (raw.type === 'coordinate.cancelled') {
+          cancelled = true;
+          yield { type: 'text', content: '[Swarm cancelled by user]', metadata: { kind: 'cancel' } };
+          break;
+        }
+
+        if (raw.type === 'coordinate.completed' || raw.type === 'coordinate.error') {
+          break;
+        }
+
+        // TODO Slice 3: parseSwarmEvent(raw) -> canonical ProtocolEvents
+        yield { type: 'raw_event', metadata: { rawEvent: raw } };
+      }
+
+      // Post-stream deliverable
+      try {
+        const snap = await this.transport.getSnapshot(swarmId);
+        const deliverable = snap.deliverable || snap.result;
+        if (deliverable) {
+          const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
+          yield { type: 'text', content: text, metadata: { final: true } };
+          this.sessionDeliverables.set(session.id, text);
+        }
+      } catch {
+        // snapshot unavailable
+      }
+
+      yield { type: 'complete', metadata: { swarmId } };
+    } finally {
+      ac.abort();
+    }
   }
 
   abortSession(_session: ProtocolSession): void {
-    // no-op stub
+    // no-op — cancel handled by sendMessage AbortController
   }
 
   cleanupSession(_session: ProtocolSession): void {
-    // no-op stub
+    // no-op — HTTP-only, nothing to clean up
   }
 }
