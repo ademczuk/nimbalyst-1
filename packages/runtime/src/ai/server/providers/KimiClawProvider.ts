@@ -143,9 +143,23 @@ export class KimiClawProvider extends BaseAgentProvider {
           const snap = await this.protocol.getSnapshot(existingSwarmId);
           const status = snap.status as string;
           if (status === 'running') {
-            // Reattach to existing SSE stream
-            console.log('[KIMICLAW] Reattaching to running swarm:', existingSwarmId);
-            // ... continue with existing session
+            // The existing swarm is still in flight. We don't yet have a
+            // factored reattach path that can re-stream events from the
+            // existing swarmId without going through the full
+            // createSession+dispatch flow below. Until that's wired,
+            // surface the situation to the user and bail rather than
+            // silently dispatching a second swarm on top of the first
+            // (which was the prior behaviour and caused duplicate
+            // dispatches on resume).
+            console.log('[KIMICLAW] Existing swarm still running, not dispatching a new one:', existingSwarmId);
+            const elapsedMs = (snap as { duration_ms?: number }).duration_ms ?? 0;
+            const elapsedSec = Math.max(1, Math.floor(elapsedMs / 1000));
+            yield {
+              type: 'text',
+              content: `KimiClaw swarm ${existingSwarmId} is still running for this session (elapsed ${elapsedSec}s). Wait for it to finish, or cancel it from the KCS UI at http://127.0.0.1:9643 before sending another message.`,
+            };
+            yield { type: 'complete', isComplete: true };
+            return;
           } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
             // Terminal — render persisted deliverable as history
             console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSwarmId);
