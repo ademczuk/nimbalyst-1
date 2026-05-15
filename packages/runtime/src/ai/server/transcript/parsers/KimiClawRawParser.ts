@@ -21,9 +21,9 @@ export class KimiClawRawParser implements IRawMessageParser {
   ): Promise<CanonicalEventDescriptor[]> {
     const events: CanonicalEventDescriptor[] = [];
 
-    const eventId = msg.id || `${msg.timestamp}-${msg.type}`;
-    if (this.processedEventIds.has(eventId)) return events;
-    this.processedEventIds.add(eventId);
+    const eventId = msg.id || `${msg.createdAt.getTime()}-${msg.source}`;
+    if (this.processedEventIds.has(String(eventId))) return events;
+    this.processedEventIds.add(String(eventId));
 
     // The raw content is a KCS SSE event { type, data }
     let raw: { type: string; data: Record<string, unknown> } | null = null;
@@ -193,9 +193,22 @@ export class KimiClawRawParser implements IRawMessageParser {
       case 'coordinate.completed':
         events.push({
           type: 'turn_ended',
-          contextFill: { inputTokens: 0, outputTokens: 0 },
+          contextFill: {
+            inputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            outputTokens: 0,
+            totalContextTokens: 0,
+          },
           contextWindow: 0,
-          cumulativeUsage: { inputTokens: 0, outputTokens: 0 },
+          cumulativeUsage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            costUSD: 0,
+            webSearchRequests: 0,
+          },
           createdAt: new Date(),
         });
         break;

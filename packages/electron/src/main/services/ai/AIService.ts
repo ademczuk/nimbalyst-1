@@ -3102,6 +3102,9 @@ export class AIService {
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
           models: providerSettings['lmstudio']?.models
+        },
+        'kimiclaw': {
+          enabled: providerSettings['kimiclaw']?.enabled === true,
         }
       };
 

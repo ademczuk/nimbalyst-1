@@ -70,6 +70,7 @@ import {
 import { getAIProviderOverridesWithWorktreeFallback } from './utils/aiSettingsMerge';
 import { registerMCPConfigHandlers } from './ipc/MCPConfigHandlers';
 import { getOpenCodeConfigService, registerOpenCodeConfigHandlers } from './ipc/OpenCodeConfigHandlers';
+import { registerKimiClawSessionHandlers } from './ipc/KimiClawSessionHandlers';
 import { registerClaudeCodePluginHandlers } from './ipc/ClaudeCodePluginHandlers';
 import { registerExportHandlers } from './ipc/ExportHandlers';
 import { registerShareHandlers } from './ipc/ShareHandlers';
@@ -1135,6 +1136,7 @@ app.whenReady().then(async () => {
     registerSuperLoopHandlers();
     registerMCPConfigHandlers();
     registerOpenCodeConfigHandlers();
+    registerKimiClawSessionHandlers();
     registerClaudeCodePluginHandlers();
     registerDatabaseBrowserHandlers();
     registerTerminalHandlers();

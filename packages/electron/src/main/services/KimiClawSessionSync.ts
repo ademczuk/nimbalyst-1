@@ -5,7 +5,7 @@
  * Maps KCS swarm -> nimbalyst session, KCS agent events -> transcript events.
  */
 
-import { query } from '../../../runtime/storage/db';
+import { database } from '../database/PGLiteDatabaseWorker';
 import type { KimiClawSwarmRecord } from './KimiClawSessionScanner';
 
 export interface KimiClawSyncResult {
@@ -22,7 +22,7 @@ export async function importKimiClawSwarm(
   swarm: KimiClawSwarmRecord,
 ): Promise<{ sessionId: string } | null> {
   try {
-    const result = await query<{ id: string }>(
+    const result = await database.query<{ id: string }>(
       `INSERT INTO ai_sessions (provider, workspace_path, title, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $4)
        RETURNING id`,
@@ -32,7 +32,7 @@ export async function importKimiClawSwarm(
     const sessionId = result.rows[0].id;
 
     // Insert transcript events for the swarm
-    await query(
+    await database.query(
       `INSERT INTO ai_transcript_events (session_id, event_type, payload, created_at)
        VALUES ($1, $2, $3, $4)`,
       [sessionId, 'assistant_message', JSON.stringify({ text: swarm.deliverable || '[No deliverable]' }), swarm.created_at],

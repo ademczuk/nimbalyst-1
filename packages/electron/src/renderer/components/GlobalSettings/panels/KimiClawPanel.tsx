@@ -33,17 +33,18 @@ interface KimiClawConfig {
 }
 
 function parseKimiClawConfig(config: ProviderConfig): KimiClawConfig {
+  const c = config as unknown as Record<string, unknown>;
   return {
-    endpointUrl: (config.endpointUrl as string) || 'http://127.0.0.1:9643',
-    authMethod: (config.authMethod as AuthMethod) || 'cookie',
-    username: (config.username as string) || 'admin',
-    password: (config.password as string) || 'admin',
-    bearerToken: (config.bearerToken as string) || '',
-    defaultMode: (config.defaultMode as DefaultMode) || 'crew',
-    maxAgents: (config.maxAgents as number) || 4,
-    maxSteps: (config.maxSteps as number) || 12,
-    maxParallel: (config.maxParallel as number | null) ?? null,
-    verboseLogging: (config.verboseLogging as boolean) || false,
+    endpointUrl: (c.endpointUrl as string) || 'http://127.0.0.1:9643',
+    authMethod: (c.authMethod as AuthMethod) || 'cookie',
+    username: (c.username as string) || 'admin',
+    password: (c.password as string) || 'admin',
+    bearerToken: (c.bearerToken as string) || '',
+    defaultMode: (c.defaultMode as DefaultMode) || 'crew',
+    maxAgents: (c.maxAgents as number) || 4,
+    maxSteps: (c.maxSteps as number) || 12,
+    maxParallel: (c.maxParallel as number | null) ?? null,
+    verboseLogging: (c.verboseLogging as boolean) || false,
   };
 }
 
@@ -269,7 +270,7 @@ export function KimiClawPanel({
           {/* Verbose Logging */}
           <div className="provider-panel-section py-4">
             <SettingsToggle
-              variant="standard"
+              variant="inline"
               name="Verbose swarm logging"
               description="Render every raw SSE event in the transcript (for debugging cascade tier transitions)"
               checked={kc.verboseLogging}

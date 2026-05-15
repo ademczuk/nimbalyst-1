@@ -32,6 +32,7 @@ export interface KimiClawSessionData {
   password?: string;
   bearerToken?: string;
   swarmDefaults: KimiClawSwarmOptions;
+  mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ export interface KimiClawTransport {
   open(options: SessionOptions): Promise<void>;
   close(): Promise<void>;
   dispatchSwarm(task: string, swarmOpts: KimiClawSwarmOptions): Promise<{ swarmId: string }>;
-  streamEvents(swarmId: string, signal: AbortSignal): AsyncIterable<RawKimiClawEvent>;
+  streamEvents(swarmId: string, signal: AbortSignal, afterSeq?: number): AsyncIterable<RawKimiClawEvent>;
   cancelSwarm(swarmId: string, reason: string): Promise<void>;
   getSnapshot(swarmId: string): Promise<Record<string, unknown>>;
   getAgents(swarmId: string): Promise<Record<string, unknown>>;
@@ -142,10 +143,13 @@ export class KimiClawHttpTransport implements KimiClawTransport {
     return { swarmId: body.swarm_id as string };
   }
 
-  async *streamEvents(swarmId: string, signal: AbortSignal): AsyncIterable<RawKimiClawEvent> {
+  async *streamEvents(swarmId: string, signal: AbortSignal, afterSeq?: number): AsyncIterable<RawKimiClawEvent> {
     const fetch = await getFetch();
     const headers = await this.buildHeaders();
-    const r = await fetch(`${this.endpoint}/api/v2/swarm/${swarmId}/events`, { signal });
+    const url = afterSeq
+      ? `${this.endpoint}/api/v2/swarm/${swarmId}/events?after_seq=${afterSeq}`
+      : `${this.endpoint}/api/v2/swarm/${swarmId}/events`;
+    const r = await fetch(url, { signal });
     if (!r.ok) throw new KimiClawError(`events failed: ${r.status}`);
     if (!r.body) return;
 
@@ -401,6 +405,14 @@ export class KimiClawProtocol implements AgentProtocol {
 
   async forkSession(sessionId: string, options: SessionOptions): Promise<ProtocolSession> {
     return this.createSession(options);
+  }
+
+  async healthCheck(): Promise<boolean> {
+    return this.transport.healthCheck();
+  }
+
+  async getSnapshot(swarmId: string): Promise<Record<string, unknown>> {
+    return this.transport.getSnapshot(swarmId);
   }
 
   /**

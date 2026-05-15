@@ -5,8 +5,6 @@
  * GET /api/v2/swarms with pagination.
  */
 
-import { query } from '../../../runtime/storage/db';
-
 export interface KimiClawSwarmRecord {
   swarm_id: string;
   status: string;
@@ -42,14 +40,19 @@ export async function scanKimiClawSessions(
     headers['Authorization'] = `Bearer ${auth.bearerToken}`;
   }
 
-  // For cookie mode, we'd need the cookie jar -- simplified for now
   const url = `${endpoint}/api/v2/swarms?limit=${limit}&offset=${offset}`;
 
   try {
-    // Use Electron's net or node-fetch via a helper
-    // Since we're in the main process, we can use the transport directly
-    // For now, return empty -- the transport will be available at runtime
-    return { swarms: [], total: 0 };
+    const fetch = (await import('node-fetch')).default;
+    const r = await fetch(url, { headers });
+    if (!r.ok) {
+      console.error('[KIMICLAW-SCANNER] HTTP error:', r.status, await r.text());
+      return { swarms: [], total: 0 };
+    }
+    const body = (await r.json()) as Record<string, unknown>;
+    const swarms = Array.isArray(body.swarms) ? (body.swarms as KimiClawSwarmRecord[]) : [];
+    const total = typeof body.total === 'number' ? body.total : swarms.length;
+    return { swarms, total };
   } catch (error) {
     console.error('[KIMICLAW-SCANNER] Failed to scan sessions:', error);
     return { swarms: [], total: 0 };

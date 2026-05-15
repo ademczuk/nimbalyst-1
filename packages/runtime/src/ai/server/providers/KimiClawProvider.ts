@@ -34,7 +34,18 @@ export class KimiClawProvider extends BaseAgentProvider {
   constructor(deps?: KimiClawProviderDeps) {
     super();
     this.protocol = deps?.protocol || new KimiClawProtocol();
-    this.mcpConfigService = new McpConfigService();
+    this.mcpConfigService = new McpConfigService({
+      mcpServerPort: null,
+      sessionNamingServerPort: null,
+      extensionDevServerPort: null,
+      superLoopProgressServerPort: null,
+      sessionContextServerPort: null,
+      mcpAuthToken: null,
+      mcpConfigLoader: null,
+      extensionPluginsLoader: null,
+      claudeSettingsEnvLoader: null,
+      shellEnvironmentLoader: null,
+    });
   }
 
   async initialize(config: ProviderConfig): Promise<void> {
@@ -72,6 +83,10 @@ export class KimiClawProvider extends BaseAgentProvider {
         provider: 'kimiclaw' as AIProviderType,
       },
     ];
+  }
+
+  static getDefaultModel(): string {
+    return 'kimi-code/kimi-for-coding';
   }
 
   getProviderSessionData(sessionId: string): any {
@@ -125,7 +140,7 @@ export class KimiClawProvider extends BaseAgentProvider {
       if (isResumedSession && existingSessionId) {
         // Check if the swarm is still alive
         try {
-          const snap = await (this.protocol as any).transport.getSnapshot(existingSessionId);
+          const snap = await this.protocol.getSnapshot(existingSessionId);
           const status = snap.status as string;
           if (status === 'running') {
             // Reattach to existing SSE stream
@@ -246,20 +261,24 @@ export class KimiClawProvider extends BaseAgentProvider {
    */
   private async processTranscriptMessages(sessionId: string): Promise<void> {
     try {
-      const { TranscriptEventRepository } = await import('../../../storage/repositories/TranscriptEventRepository');
-      const { TranscriptMigrationRepository } = await import('../../../storage/repositories/TranscriptMigrationRepository');
-      const { TranscriptTransformer } = await import('../../../storage/transformers/TranscriptTransformer');
-      const transformer = new TranscriptTransformer(new TranscriptEventRepository(), new TranscriptMigrationRepository());
-      await transformer.processEventsForSession(sessionId);
-    } catch (error) {
-      console.error('[KIMICLAW] Error processing transcript messages:', error);
+      if (TranscriptMigrationRepository.hasService()) {
+        await TranscriptMigrationRepository.getService().processNewMessages(
+          sessionId,
+          this.getProviderName(),
+        );
+      }
+    } catch {
+      // Best effort -- the session reload will catch up via ensureUpToDate
     }
   }
 
   async checkInstallation(): Promise<{ installed: boolean; details?: string }> {
     try {
-      // TODO: use actual transport health check
-      return { installed: true, details: 'KimiClaw reachable at 127.0.0.1:9643' };
+      const healthy = await this.protocol.healthCheck();
+      if (healthy) {
+        return { installed: true, details: 'KimiClaw reachable' };
+      }
+      return { installed: false, details: 'KimiClaw not reachable. Run: docker compose up -d' };
     } catch {
       return { installed: false, details: 'KimiClaw not reachable. Run: docker compose up -d' };
     }

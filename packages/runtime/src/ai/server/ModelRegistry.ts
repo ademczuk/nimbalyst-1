@@ -74,6 +74,10 @@ export class ModelRegistry {
           const { CopilotCLIProvider } = await import('./providers/CopilotCLIProvider');
           models = await CopilotCLIProvider.getModels();
           break;
+        case 'kimiclaw':
+          const { KimiClawProvider } = await import('./providers/KimiClawProvider');
+          models = await KimiClawProvider.getModels();
+          break;
         default:
           assertExhaustiveProvider(provider);
       }
@@ -153,6 +157,9 @@ export class ModelRegistry {
       case 'copilot-cli':
         const { CopilotCLIProvider: CLP } = await import('./providers/CopilotCLIProvider');
         return CLP.getDefaultModel();
+      case 'kimiclaw':
+        const { KimiClawProvider: KCP } = await import('./providers/KimiClawProvider');
+        return KCP.getDefaultModel();
       default:
         assertExhaustiveProvider(provider);
     }
