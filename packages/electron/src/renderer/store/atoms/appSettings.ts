@@ -1086,6 +1086,7 @@ const defaultProviders: Record<string, ProviderConfig> = {
   'openai-codex-acp': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   opencode: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   'copilot-cli': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  kimiclaw: { enabled: false, testStatus: 'idle', installStatus: 'not-installed', endpoint: 'http://127.0.0.1:9643' },
   lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
 };
 
@@ -1098,6 +1099,7 @@ const defaultApiKeys: Record<string, string> = {
   openai: '',
   'openai-codex': '',
   lmstudio_url: 'http://127.0.0.1:8234',
+  kimiclaw_endpoint: 'http://127.0.0.1:9643',
 };
 
 /**
