@@ -3,6 +3,7 @@ import { VList, type VListHandle, type CacheSnapshot } from 'virtua';
 import type { TranscriptViewMessage, SessionData } from '../../../ai/server/types';
 import type { TranscriptSettings } from '../types';
 import { MessageSegment } from './MessageSegment';
+import { KimiClawAgentRenderer } from './KimiClawAgentRenderer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ProviderIcon } from '../../icons/ProviderIcons';
 import { MaterialSymbol } from '../../icons/MaterialSymbol';
@@ -2016,6 +2017,18 @@ export const RichTranscriptView = React.forwardRef<
                       </div>
                     );
                   })}
+                  {/* Fix C: KimiClaw per-agent visual rendering */}
+                  {provider === 'kimiclaw' && messages.some(m => (m.metadata as Record<string, unknown> | undefined)?.agentId) && (
+                    <div className="kimiclaw-agent-section mt-4 pt-4 border-t border-[var(--nim-border)]">
+                      <div className="flex items-center gap-2 mb-3">
+                        <MaterialSymbol icon="hive" size={16} className="text-[var(--nim-text-muted)]" />
+                        <span className="text-sm font-semibold text-[var(--nim-text)]">Agent Activity</span>
+                        <span className="text-xs text-[var(--nim-text-muted)]">-- grouped by agent</span>
+                      </div>
+                      <KimiClawAgentRenderer messages={messages} />
+                    </div>
+                  )}
+
                   {/* Restart indicator at bottom when all messages precede the restart (dev mode only) */}
                   {restartAtBottom && (
                     <div key="restart-bottom" className="flex items-center gap-3 my-2 px-3">
