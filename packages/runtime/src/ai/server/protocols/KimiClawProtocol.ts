@@ -353,6 +353,40 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       break;
     }
 
+    case 'orchestrator.started': {
+      const task = d.task as string | undefined;
+      events.push({
+        type: 'text',
+        content: task ? `Starting: ${task}` : 'Starting swarm...',
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+    }
+
+    case 'swarm.configured': {
+      const maxAgents = d.max_agents ?? '?';
+      const maxSteps = d.max_steps ?? '?';
+      events.push({
+        type: 'text',
+        content: `Configured — max ${maxAgents} agents, ${maxSteps} steps`,
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+    }
+
+    case 'orchestrator.failed':
+    case 'orchestrator.error': {
+      const errorMsg = d.error as string | undefined;
+      if (errorMsg) {
+        events.push({
+          type: 'text',
+          content: `Error: ${errorMsg}`,
+          metadata: { kind: 'orchestrator_error' },
+        });
+      }
+      break;
+    }
+
     case 'agent.started': {
       const name1 = (d.name as string | undefined)?.replace(/^Agent\s+/i, '') || (d.agent_id as string)?.slice(0, 8);
       events.push({
@@ -442,16 +476,26 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
     }
 
     case 'orchestrator.deliverable': {
-      // KCS deliverables are file artifacts, not inline text
-      const fileName = d.file_name as string | undefined;
-      const fileSize = d.file_size as number | undefined;
-      if (fileName) {
-        const sizeStr = typeof fileSize === 'number' ? ` (${fileSize} bytes)` : '';
+      // api_server.py sends inline content in the `content` field.
+      // Older KCS engines send file artifacts with `file_name`/`file_size`.
+      const content = d.content as string | undefined;
+      if (content && content.trim()) {
         events.push({
           type: 'text',
-          content: `📎 Artifact: ${fileName}${sizeStr}`,
-          metadata: { kind: 'deliverable', fileName, fileSize, downloadUrl: d.download_url },
+          content: content.trim(),
+          metadata: { kind: 'deliverable' },
         });
+      } else {
+        const fileName = d.file_name as string | undefined;
+        const fileSize = d.file_size as number | undefined;
+        if (fileName) {
+          const sizeStr = typeof fileSize === 'number' ? ` (${fileSize} bytes)` : '';
+          events.push({
+            type: 'text',
+            content: `📎 Artifact: ${fileName}${sizeStr}`,
+            metadata: { kind: 'deliverable', fileName, fileSize, downloadUrl: d.download_url },
+          });
+        }
       }
       break;
     }
@@ -626,6 +670,11 @@ export class KimiClawProtocol implements AgentProtocol {
           if (text) {
             yield { type: 'text', content: text, metadata: { final: true } };
             this.sessionDeliverables.set(session.id, text);
+          } else if (typeof fallback === 'string' && fallback.trim()) {
+            // extractResultText rejected the string (e.g. Python repr).
+            // Show it raw so the user sees SOMETHING rather than empty output.
+            yield { type: 'text', content: fallback.trim(), metadata: { final: true } };
+            this.sessionDeliverables.set(session.id, fallback.trim());
           }
         } catch {
           // snapshot unavailable
