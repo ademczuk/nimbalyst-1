@@ -8,6 +8,7 @@ export { LoginRequiredWidget } from './LoginRequiredWidget';
 export { OpenAIAuthWidget } from './OpenAIAuthWidget';
 export { ContextLimitWidget } from './ContextLimitWidget';
 export { RateLimitWidget } from './RateLimitWidget';
+export { KimiClawAgentRenderer } from './KimiClawAgentRenderer';
 export { PromptsMenuButton, FloatingTranscriptActions } from './FloatingTranscriptActions';
 export { noopInteractiveWidgetHost } from './CustomToolWidgets';
 export type { InteractiveWidgetHost, PermissionScope, ToolPermissionResponse, ToolCallDiffResult } from './CustomToolWidgets';
