@@ -10,6 +10,7 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   'copilot-cli': 'terminal',
   // ACP transport reuses the OpenAI Codex icon (same underlying agent).
   'openai-codex-acp': 'openai-codex',
+  'kimiclaw': 'hive',
 };
 
 export function resolveProviderIcon(provider: string): string {
