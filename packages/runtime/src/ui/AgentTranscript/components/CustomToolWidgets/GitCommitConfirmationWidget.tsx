@@ -267,8 +267,27 @@ function extractToolResultText(value: unknown, seen: Set<object> = new Set()): s
 
 /**
  * Walk a result object and extract structured commit fields when present.
+ *
+ * Strings that look like a JSON object are parsed once and walked: the
+ * MCP/app-server path sometimes serializes the auto-commit result before
+ * stashing it on the tool_call row, so without this the widget's
+ * `commitHash`/`commitDate` extraction silently no-ops and the "Changes
+ * Committed" card renders without its hash badge or timestamp.
  */
 function extractStructuredCommitResult(value: unknown, seen: Set<object> = new Set()): StructuredCommitResult | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return extractStructuredCommitResult(parsed, seen);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   if (!value || typeof value !== 'object') {
     return null;
   }

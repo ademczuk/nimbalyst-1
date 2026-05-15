@@ -25,6 +25,21 @@ function isDuplicateToolStart(
   return existingToolName === toolName && isActiveToolCallEvent(existing);
 }
 
+/**
+ * Synthetic edit-group IDs minted by CodexRawParser / CodexAppServerRawParser
+ * (`nimtc|<rawItemId>|<ts>|<idx>`) are per-MCP-call, not per-turn. If two raw
+ * messages -- one SDK-shape, one app-server-shape -- both resolve to the same
+ * synthetic ID for a single MCP call (we've seen this happen for
+ * developer_git_commit_proposal when auto-commit runs in a session that has
+ * been resumed across SDK/app-server transport boundaries), the second
+ * tool_call_started must NOT create a second canonical event even if the
+ * first has already completed. The toolName-and-active dedup above only
+ * suppresses while the first event is still running.
+ */
+function isSyntheticCodexLookupId(id: string): boolean {
+  return id.startsWith('nimtc|');
+}
+
 export async function processDescriptor(
   writer: TranscriptWriter,
   store: ITranscriptEventStore,
@@ -64,15 +79,23 @@ export async function processDescriptor(
 
     case 'tool_call_started': {
       if (desc.providerToolCallId) {
+        const isSynthetic = isSyntheticCodexLookupId(desc.providerToolCallId);
         // In-memory dedup: same provider id, same toolName, and still-active
         // existing event means the parser saw this tool call twice in one
         // batch (genuine duplicate). Once the older event is completed or
         // errored, the same id/toolName pair may legitimately refer to a new
         // later-turn Codex tool call and must create a fresh event/card.
+        //
+        // Exception: synthetic `nimtc|...` IDs encode rawItemId + msg
+        // timestamp + msg row id, so a collision means two raw messages
+        // resolved to the same edit-group for the *same* MCP call (typically
+        // SDK and app-server shapes of the same item.completed during a
+        // transport upgrade). Suppress the second start even if the first
+        // event is already completed.
         const existingId = toolEventIds.get(desc.providerToolCallId);
         if (existingId !== undefined) {
           const existing = await store.getEventById(existingId);
-          if (existing && isDuplicateToolStart(existing, desc.toolName)) {
+          if (existing && (isDuplicateToolStart(existing, desc.toolName) || isSynthetic)) {
             return null;
           }
         } else {
@@ -80,7 +103,7 @@ export async function processDescriptor(
           // is fresh per batch but the DB may already hold this id from an
           // earlier batch.
           const existing = await store.findByProviderToolCallId(desc.providerToolCallId, sessionId);
-          if (existing && isDuplicateToolStart(existing, desc.toolName)) {
+          if (existing && (isDuplicateToolStart(existing, desc.toolName) || isSynthetic)) {
             toolEventIds.set(desc.providerToolCallId, existing.id);
             return null;
           }

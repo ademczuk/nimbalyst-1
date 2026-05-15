@@ -2104,6 +2104,24 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     const { content, usedFallback } = this.serializeRawCodexEvent(event.metadata.rawEvent);
     const rawEventType = this.getRawEventType(event.metadata.rawEvent);
 
+    // Diagnostic: in an app-server-transport session, writing an SDK-shape raw
+    // row means some path is double-emitting. Caught it for
+    // developer_git_commit_proposal once -- the SDK row collided with the
+    // app-server row through the same synthetic edit-group ID and produced a
+    // second "Changes Committed" card. Log enough context to locate the
+    // emitter the next time it fires.
+    if (this.transport === 'app-server') {
+      console.warn(
+        '[CODEX][SDK-RAW-IN-APPSERVER] unexpected SDK-shape raw_event during app-server transport',
+        {
+          sessionId,
+          rawEventType,
+          rawItemId: this.extractCodexRawItemId(event.metadata.rawEvent),
+          stack: new Error('sdk-raw emitter').stack?.split('\n').slice(1, 8).join('\n'),
+        }
+      );
+    }
+
     // Mint or look up the synthetic edit-group ID for this raw event's tool
     // item (if any). Stamping it onto the message metadata makes it the
     // canonical source of the providerToolCallId for both the parser
