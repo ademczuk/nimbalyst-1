@@ -59,7 +59,7 @@ export class KimiClawProvider extends BaseAgentProvider {
       tools: false,
       mcpSupport: false,
       edits: false,
-      resumeSession: false,
+      resumeSession: true,
       supportsFileTools: false,
     };
   }
@@ -121,6 +121,33 @@ export class KimiClawProvider extends BaseAgentProvider {
     try {
       const existingSessionId = this.sessions.getSessionId(sessionId || '');
 
+      const isResumedSession = !!existingSessionId;
+      if (isResumedSession && existingSessionId) {
+        // Check if the swarm is still alive
+        try {
+          const snap = await (this.protocol as any).transport.getSnapshot(existingSessionId);
+          const status = snap.status as string;
+          if (status === 'running') {
+            // Reattach to existing SSE stream
+            console.log('[KIMICLAW] Reattaching to running swarm:', existingSessionId);
+            // ... continue with existing session
+          } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            // Terminal — render persisted deliverable as history
+            console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSessionId);
+            const deliverable = snap.deliverable || snap.result;
+            if (deliverable) {
+              const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
+              yield { type: 'text', content: text };
+              yield { type: 'complete', isComplete: true };
+              return;
+            }
+          }
+        } catch {
+          // Snapshot failed — treat as new session
+          console.warn('[KIMICLAW] Resume snapshot failed, treating as new session');
+        }
+      }
+
       const sessionOptions = {
         workspacePath,
         model: this.config?.model || 'default',
@@ -139,7 +166,6 @@ export class KimiClawProvider extends BaseAgentProvider {
         } as Record<string, unknown>,
       };
 
-      const isResumedSession = !!existingSessionId;
       const session = isResumedSession
         ? await this.protocol.resumeSession(existingSessionId, sessionOptions)
         : await this.protocol.createSession(sessionOptions);
