@@ -642,19 +642,39 @@ export function registerWorkspaceHandlers() {
         }
     });
 
-    // Get recent workspace files
-    safeHandle('get-recent-workspace-files', async (event) => {
-        const window = BrowserWindow.fromWebContents(event.sender);
-        if (!window) return [];
+    // Get recent workspace files.
+    //
+    // Pre-#188 (single-workspace-per-window) this resolved the workspace from
+    // BrowserWindow state. After the multi-project rail landed, a single
+    // window can have multiple workspaces pinned and the caller knows which
+    // one it cares about; falling back to window state caused Cmd+O Quick Open
+    // and the @-mention picker to pull "recent files" from whichever workspace
+    // the window happened to be tracking last, which leaks files from other
+    // pinned workspaces into the picker. See #301 (Quick Open) and #304
+    // (@-mention shows alphabetical instead of recents because the cross-
+    // workspace recent list failed its path-prefix filter and fell through to
+    // the alphabetical search path).
+    //
+    // The renderer now passes workspacePath explicitly. The window-state
+    // fallback stays for backwards compatibility with any older renderer
+    // bundle that may still hit this channel without the parameter.
+    safeHandle('get-recent-workspace-files', async (event, workspacePath?: string) => {
+        let scope = workspacePath;
 
-        const windowId = getWindowId(window);
-        if (windowId === null) return [];
+        if (!scope) {
+            const window = BrowserWindow.fromWebContents(event.sender);
+            if (!window) return [];
 
-        const state = windowStates.get(windowId);
-        if (!state || !state.workspacePath) return [];
+            const windowId = getWindowId(window);
+            if (windowId === null) return [];
+
+            const state = windowStates.get(windowId);
+            if (!state || !state.workspacePath) return [];
+            scope = state.workspacePath;
+        }
 
         // Get recent files for this workspace from store
-        const workspaceRecentFiles = getWorkspaceRecentFiles(state.workspacePath);
+        const workspaceRecentFiles = getWorkspaceRecentFiles(scope);
 
         // Ensure it's an array before filtering
         if (!Array.isArray(workspaceRecentFiles)) {

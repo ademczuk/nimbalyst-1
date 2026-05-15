@@ -165,7 +165,7 @@ interface ElectronAPI {
   searchWorkspaceFiles: (workspacePath: string, query: string) => Promise<any[]>;
   searchWorkspaceFileNames: (workspacePath: string, query: string) => Promise<any[]>;
   searchWorkspaceFileContent: (workspacePath: string, query: string) => Promise<any[]>;
-  getRecentWorkspaceFiles: () => Promise<string[]>;
+  getRecentWorkspaceFiles: (workspacePath?: string) => Promise<string[]>;
   addToWorkspaceRecentFiles: (filePath: string) => void;
 
   // History operations

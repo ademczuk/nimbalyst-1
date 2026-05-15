@@ -328,10 +328,16 @@ export const QuickOpen: React.FC<QuickOpenProps> = ({
     };
   }, [searchQuery, searchFiles, startInContentSearchMode, workspacePath, recentFiles]);
 
-  // Load recent files when modal opens
+  // Load recent files when modal opens.
+  //
+  // Pass the explicit `workspacePath` so the main process scopes the recent
+  // list to THIS workspace, not whichever workspace the window state last
+  // tracked. With the multi-project rail (#188) a single window can have
+  // multiple workspaces pinned; without the explicit scope, Quick Open
+  // returned recent files from other pinned workspaces. See #301.
   useEffect(() => {
     if (isOpen && window.electronAPI?.getRecentWorkspaceFiles) {
-      window.electronAPI.getRecentWorkspaceFiles()
+      window.electronAPI.getRecentWorkspaceFiles(workspacePath)
         .then(files => {
           setRecentFiles(files || []);
         })
@@ -340,7 +346,7 @@ export const QuickOpen: React.FC<QuickOpenProps> = ({
           setRecentFiles([]);
         });
     }
-  }, [isOpen]);
+  }, [isOpen, workspacePath]);
 
   // Reset state when modal opens/closes
   useEffect(() => {

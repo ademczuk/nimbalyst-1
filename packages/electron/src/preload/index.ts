@@ -367,7 +367,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchWorkspaceFiles: (workspacePath: string, query: string) => ipcRenderer.invoke('search-workspace-files', workspacePath, query),
   searchWorkspaceFileNames: (workspacePath: string, query: string) => ipcRenderer.invoke('search-workspace-file-names', workspacePath, query),
   searchWorkspaceFileContent: (workspacePath: string, query: string) => ipcRenderer.invoke('search-workspace-file-content', workspacePath, query),
-  getRecentWorkspaceFiles: () => ipcRenderer.invoke('get-recent-workspace-files'),
+  getRecentWorkspaceFiles: (workspacePath?: string) => ipcRenderer.invoke('get-recent-workspace-files', workspacePath),
   addToWorkspaceRecentFiles: (filePath: string) => ipcRenderer.send('add-to-workspace-recent-files', filePath),
 
   // Tab state has been moved to unified workspace state - use invoke('workspace:get-state', path) instead
