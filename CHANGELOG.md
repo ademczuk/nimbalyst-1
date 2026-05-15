@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
+- PGLite lock-staleness check now surfaces an "ambiguous" branch and asks the user via dialog instead of guessing. Follow-up to the closed PR #316: previously the EPERM-with-fresh-timestamp case (lock < 60s old, lock holder PID unsignalable from us) was treated as a live sibling and the launch was refused. On a slow-disk machine where the original Nimbalyst wrote the lock less than 60s before crashing, that produced a false-positive DATABASE_LOCKED that the user could only clear by deleting the lock file from the filesystem. `decideLockIsRunning` now returns a ternary `decision: 'running' | 'stale' | 'ambiguous'` and exposes `lockPid` / `lockAgeMs` for dialog rendering. The 'running' and 'stale' branches behave as before. The 'ambiguous' branch raises a distinct `DATABASE_LOCKED_AMBIGUOUS` error code; `PGLiteDatabaseWorker` catches it and shows a dialog explaining the two scenarios (live sibling vs fast PID reuse) with "Cancel" and "Open Anyway (clear lock)" buttons. The legacy `isRunning` boolean stays on the return shape for backwards compatibility (true for both 'running' and 'ambiguous'). Per @ghinkle's review on the closed PR #316. (#272 follow-up)
 <!-- Bug fixes go here -->
 
 ### Removed
