@@ -11,6 +11,7 @@
  * then streams events via GET /api/v2/swarm/<id>/events (SSE).
  */
 
+// Node.js built-in; ok since this runs in the Electron main process (server-side).
 import { randomUUID } from 'crypto';
 import {
   AgentProtocol,
@@ -18,7 +19,6 @@ import {
   SessionOptions,
   ProtocolMessage,
   ProtocolEvent,
-  ProtocolEventType,
 } from './ProtocolInterface';
 
 // ---------------------------------------------------------------------------
