@@ -11,6 +11,7 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
+import { KimiClawProvider } from './providers/KimiClawProvider';
 import { ProviderConfig, AIProviderType, assertExhaustiveProvider } from './types';
 
 export class ProviderFactory {
@@ -74,6 +75,9 @@ export class ProviderFactory {
         break;
       case 'copilot-cli':
         provider = new CopilotCLIProvider();
+        break;
+      case 'kimiclaw':
+        provider = new KimiClawProvider();
         break;
       default:
         assertExhaustiveProvider(type);
