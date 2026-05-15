@@ -29,6 +29,7 @@ import {
 } from '../protocols/KimiClawProtocol';
 import { safeJSONSerialize } from '../../../utils/serialization';
 import { AgentProtocolTranscriptAdapter } from './agentProtocol/AgentProtocolTranscriptAdapter';
+import { McpConfigService } from '../services/McpConfigService';
 
 interface KimiClawProviderDeps {
   protocol?: KimiClawProtocol;
@@ -50,6 +51,8 @@ export class KimiClawProvider extends BaseAgentProvider {
   };
 
   // Analytics initialization data
+  private readonly mcpConfigService: McpConfigService;
+
   private _initData: {
     model: string;
     isResumedSession: boolean;
@@ -65,6 +68,7 @@ export class KimiClawProvider extends BaseAgentProvider {
         bearerToken: this.bearerToken,
       })
     );
+    this.mcpConfigService = new McpConfigService();
   }
 
   getProviderName(): string {
@@ -168,9 +172,18 @@ export class KimiClawProvider extends BaseAgentProvider {
         action: existingSessionId ? 'RESUME' : 'CREATE'
       });
 
+      // Fix D: Collect MCP servers for passthrough to KCS
+      let mcpServers: Record<string, any> | undefined;
+      try {
+        mcpServers = await this.mcpConfigService.getMcpServersConfig({ sessionId, workspacePath });
+      } catch {
+        // MCP not available, proceed without
+      }
+
       const sessionOptions = {
         workspacePath,
         model: this.config?.model || 'default',
+        mcpServers,
         raw: {
           endpoint: this.endpoint,
           authMode: this.authMode,
@@ -178,6 +191,7 @@ export class KimiClawProvider extends BaseAgentProvider {
           password: this.password,
           bearerToken: this.bearerToken,
           swarmDefaults: this.swarmDefaults,
+          mcpServers,
         },
       };
 
