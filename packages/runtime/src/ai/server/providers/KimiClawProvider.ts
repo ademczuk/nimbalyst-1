@@ -28,7 +28,6 @@ import {
   KimiClawProtocol,
   KimiClawHttpTransport,
   KimiClawSwarmOptions,
-  KimiClawError,
 } from '../protocols/KimiClawProtocol';
 import { AgentProtocolTranscriptAdapter } from './agentProtocol/AgentProtocolTranscriptAdapter';
 
