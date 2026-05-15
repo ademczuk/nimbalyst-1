@@ -1,14 +1,12 @@
 /**
  * KimiClaw Agent Provider
  *
- * Integrates KimiClawSwarm (KCS) — a local Flask HTTP server in Docker
- * on 127.0.0.1:9643 — into Nimbalyst.
+ * Integrates KimiClawSwarm (KCS) -- a local Flask HTTP server in Docker
+ * on 127.0.0.1:9643 -- into Nimbalyst.
  *
  * Key features:
  * - HTTP+SSE transport (no subprocess management needed)
  * - Cookie or Bearer token auth
- * - Session-cookie auth via POST /api/login (admin/admin default)
- * - Bearer token generation via POST /api/tokens
  * - Per-agent metadata tagging (agentId, tier, persona)
  * - Cascade tier visibility (synthetic badge for tier-5)
  */
@@ -29,6 +27,7 @@ import {
   KimiClawHttpTransport,
   KimiClawSwarmOptions,
 } from '../protocols/KimiClawProtocol';
+import { safeJSONSerialize } from '../../../utils/serialization';
 import { AgentProtocolTranscriptAdapter } from './agentProtocol/AgentProtocolTranscriptAdapter';
 
 interface KimiClawProviderDeps {
@@ -37,9 +36,8 @@ interface KimiClawProviderDeps {
 
 export class KimiClawProvider extends BaseAgentProvider {
   private protocol: KimiClawProtocol;
-  private currentSwarmId: string | null = null;
 
-  // Configuration (set via initialize or static setters)
+  // Configuration (set via initialize)
   private endpoint: string = 'http://127.0.0.1:9643';
   private authMode: 'cookie' | 'bearer' = 'cookie';
   private username: string = 'admin';
@@ -51,12 +49,11 @@ export class KimiClawProvider extends BaseAgentProvider {
     max_steps: 12,
   };
 
-  // Static swarm defaults setter (called from settings panel)
-  private static globalSwarmDefaults: KimiClawSwarmOptions = {
-    persona_mode: true,
-    max_agents: 4,
-    max_steps: 12,
-  };
+  // Analytics initialization data
+  private _initData: {
+    model: string;
+    isResumedSession: boolean;
+  } | null = null;
 
   constructor(deps: KimiClawProviderDeps = {}) {
     super();
@@ -74,29 +71,13 @@ export class KimiClawProvider extends BaseAgentProvider {
     return 'kimiclaw';
   }
 
-  getDisplayName(): string {
-    return 'KimiClaw';
-  }
-
-  getDescription(): string {
-    return 'KimiClaw Swarm — local multi-agent orchestration in Docker';
-  }
-
-  getProviderSessionData(sessionId: string): any {
-    const { providerSessionId } = this.sessions.getProviderSessionData(sessionId);
-    return {
-      providerSessionId,
-      swarmId: this.currentSwarmId,
-    };
-  }
-
   getCapabilities(): ProviderCapabilities {
     return {
       streaming: true,
-      tools: false,      // KCS tools are internal, not exposed to nimbalyst
-      mcpSupport: false, // Phase 1: MCP passthrough deferred
-      edits: false,      // KCS does not expose file edits directly
-      resumeSession: false, // KCS swarms are fire-and-forget
+      tools: false,
+      mcpSupport: false,
+      edits: false,
+      resumeSession: false,
       supportsFileTools: false,
     };
   }
@@ -112,24 +93,24 @@ export class KimiClawProvider extends BaseAgentProvider {
   }
 
   async initialize(config: ProviderConfig): Promise<void> {
-    this.config = config;
-    if (config.baseUrl) this.endpoint = config.baseUrl;
-    // @ts-expect-error - authMode is a custom config field
-    if (config.authMode) this.authMode = config.authMode as 'cookie' | 'bearer';
+    // @ts-expect-error -- custom config fields not in base ProviderConfig
+    if (config.endpoint || config.baseUrl) this.endpoint = config.endpoint || config.baseUrl;
     // @ts-expect-error
-    if (config.username) this.username = config.username as string;
+    if (config.authMode) this.authMode = config.authMode;
     // @ts-expect-error
-    if (config.password) this.password = config.password as string;
+    if (config.username) this.username = config.username;
     // @ts-expect-error
-    if (config.bearerToken) this.bearerToken = config.bearerToken as string;
+    if (config.password) this.password = config.password;
     // @ts-expect-error
-    if (config.personaMode !== undefined) this.swarmDefaults.persona_mode = config.personaMode as boolean;
+    if (config.bearerToken) this.bearerToken = config.bearerToken;
     // @ts-expect-error
-    if (config.maxAgents !== undefined) this.swarmDefaults.max_agents = config.maxAgents as number;
+    if (config.personaMode !== undefined) this.swarmDefaults.persona_mode = config.personaMode;
     // @ts-expect-error
-    if (config.maxSteps !== undefined) this.swarmDefaults.max_steps = config.maxSteps as number;
+    if (config.maxAgents !== undefined) this.swarmDefaults.max_agents = config.maxAgents;
     // @ts-expect-error
-    if (config.maxParallel !== undefined) this.swarmDefaults.max_parallel = config.maxParallel as number;
+    if (config.maxSteps !== undefined) this.swarmDefaults.max_steps = config.maxSteps;
+    // @ts-expect-error
+    if (config.maxParallel !== undefined) this.swarmDefaults.max_parallel = config.maxParallel;
 
     // Rebuild protocol with updated config
     this.protocol = new KimiClawProtocol(
@@ -146,35 +127,50 @@ export class KimiClawProvider extends BaseAgentProvider {
     message: string,
     documentContext?: DocumentContext,
     sessionId?: string,
-    _messages?: unknown[],
+    _messages?: any[],
     workspacePath?: string,
-    attachments?: ChatAttachment[],
+    attachments?: ChatAttachment[]
   ): AsyncIterableIterator<StreamChunk> {
+    if (!workspacePath) {
+      yield { type: 'error', error: '[KimiClawProvider] workspacePath is required but was not provided' };
+      return;
+    }
+
+    const systemPrompt = this.buildSystemPrompt(documentContext);
+    const { userMessageAddition, messageWithContext } = buildUserMessageAddition(message, documentContext);
+
+    // Emit prompt additions for UI
+    if (sessionId && (systemPrompt || userMessageAddition)) {
+      this.emit('promptAdditions', {
+        sessionId,
+        systemPromptAddition: systemPrompt || null,
+        userMessageAddition,
+        attachments: [],
+        timestamp: Date.now(),
+      });
+    }
+
+    if (sessionId) {
+      await this.logAgentMessageBestEffort(sessionId, 'input', messageWithContext);
+    }
+
     const abortController = new AbortController();
     this.abortController = abortController;
-    const nimbalystSessionId = sessionId || 'unknown';
+
     let fullText = '';
 
     try {
-      const { userMessageAddition, messageWithContext } = buildUserMessageAddition(message, documentContext);
+      // Get or create protocol session
+      const existingSessionId = this.sessions.getSessionId(sessionId || '');
+      console.log('[KIMICLAW] Session lookup:', {
+        sessionId,
+        existingSessionId,
+        action: existingSessionId ? 'RESUME' : 'CREATE'
+      });
 
-      // Emit prompt additions for UI
-      if (sessionId && (userMessageAddition)) {
-        this.emit('promptAdditions', {
-          sessionId,
-          systemPromptAddition: null,
-          userMessageAddition,
-          attachments: [],
-          timestamp: Date.now(),
-        });
-      }
-
-      // Create a protocol session
-      const protocolSession = await this.protocol.createSession({
-        workspacePath: workspacePath || '.',
-        model: documentContext?.model,
-        systemPrompt: undefined,
-        abortSignal: abortController.signal,
+      const sessionOptions = {
+        workspacePath,
+        model: this.config?.model || 'default',
         raw: {
           endpoint: this.endpoint,
           authMode: this.authMode,
@@ -183,68 +179,63 @@ export class KimiClawProvider extends BaseAgentProvider {
           bearerToken: this.bearerToken,
           swarmDefaults: this.swarmDefaults,
         },
+      };
+
+      const isResumedSession = !!existingSessionId;
+      const session = isResumedSession
+        ? await this.protocol.resumeSession(existingSessionId, sessionOptions)
+        : await this.protocol.createSession(sessionOptions);
+
+      // Store initialization data for analytics
+      this._initData = {
+        model: this.config?.model || 'default',
+        isResumedSession,
+      };
+
+      console.log('[KIMICLAW] Session after create/resume:', {
+        sessionId,
+        protocolSessionId: session.id,
+        existingSessionId
       });
 
-      // Store session mapping
-      if (sessionId) {
-        this.sessions.setProviderSessionData(sessionId, {
-          providerSessionId: protocolSession.id,
-          platform: 'kimiclaw',
-        });
-      }
+      // Create transcript adapter as event parser
+      const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
 
-      // Initialize transcript adapter
-      const transcriptAdapter = new AgentProtocolTranscriptAdapter(this, nimbalystSessionId);
       transcriptAdapter.userMessage(
         messageWithContext,
         documentContext?.mode === 'planning' ? 'planning' : 'agent',
         attachments as any,
       );
 
-      // Log user message
-      this.logAgentMessageNonBlocking(
-        nimbalystSessionId,
-        this.getProviderName(),
-        'input',
-        message,
-      );
-
-      // Stream protocol events
-      for await (const event of this.protocol.sendMessage(protocolSession, {
+      // Send message using protocol -- adapter parses all events
+      for await (const event of this.protocol.sendMessage(session, {
         content: messageWithContext,
         attachments,
-        sessionId: nimbalystSessionId,
-        mode: documentContext?.mode === 'planning' ? 'planning' : 'agent',
+        sessionId,
+        mode: documentContext?.mode || 'agent',
       })) {
-        // Handle abort
         if (abortController.signal.aborted) {
           throw new Error('Operation cancelled');
         }
 
-        // Store raw KCS events for transcript reconstruction
+        // Store raw KCS SSE events for transcript reconstruction
         if (sessionId && event.type === 'raw_event') {
           const rawSseEvent = (event.metadata as { rawEvent?: unknown } | undefined)?.rawEvent;
           if (rawSseEvent !== undefined) {
-            const content = typeof rawSseEvent === 'string'
-              ? rawSseEvent
-              : JSON.stringify(rawSseEvent);
+            const { content } = safeJSONSerialize(rawSseEvent);
             const sseEventType = typeof (rawSseEvent as { type?: unknown }).type === 'string'
               ? (rawSseEvent as { type: string }).type
               : 'unknown';
-            await this.logAgentMessageBestEffort(
-              sessionId,
-              'output',
-              content,
-              {
-                metadata: { eventType: sseEventType, kimiclawProvider: true },
-                hidden: true,
-                searchable: false,
-              },
-            );
+            await this.logAgentMessageBestEffort(sessionId, 'output', content, {
+              metadata: { eventType: sseEventType, kimiclawProvider: true },
+              hidden: true,
+              searchable: false,
+            });
+            // Drive incremental transcript transformation
+            await this.processTranscriptMessages(sessionId);
           }
         }
 
-        // Map protocol events to StreamChunk via transcript adapter
         for (const item of transcriptAdapter.processEvent(event)) {
           switch (item.kind) {
             case 'text':
@@ -292,13 +283,19 @@ export class KimiClawProvider extends BaseAgentProvider {
               break;
           }
         }
+      }
 
-        // Track swarm completion
-        if (event.type === 'complete') {
-          const swarmId = event.metadata?.swarmId as string;
-          if (swarmId) {
-            this.currentSwarmId = swarmId;
-          }
+      // Capture session ID after stream completes
+      if (sessionId && session.id) {
+        if (session.id !== existingSessionId) {
+          console.log('[KIMICLAW] Saving provider session ID:', {
+            nimbalystSessionId: sessionId,
+            providerSessionId: session.id,
+          });
+          this.sessions.setProviderSessionData(sessionId, {
+            providerSessionId: session.id,
+            platform: 'kimiclaw',
+          });
         }
       }
 
@@ -309,18 +306,14 @@ export class KimiClawProvider extends BaseAgentProvider {
       if (!isAbort) {
         console.error('[KIMICLAW] Error in sendMessage:', errorMessage);
         yield { type: 'error', error: errorMessage };
-        this.logAgentMessageNonBlocking(
-          nimbalystSessionId,
-          this.getProviderName(),
-          'output',
-          `Error: ${errorMessage}`,
-          { isError: true },
-        );
+        await this.logAgentMessageBestEffort(sessionId || 'unknown', 'output', errorMessage, {
+          metadata: { isError: true },
+          hidden: false,
+          searchable: false,
+        });
       }
     } finally {
-      if (this.abortController === abortController) {
-        this.abortController = null;
-      }
+      this.abortController = null;
     }
   }
 
@@ -345,11 +338,7 @@ export class KimiClawProvider extends BaseAgentProvider {
 
   // ---- Static setters for settings panel ----
 
-  static setSwarmDefaults(defaults: KimiClawSwarmOptions): void {
-    KimiClawProvider.globalSwarmDefaults = { ...defaults };
-  }
-
-  static setEndpoint(_endpoint: string): void {
+  static setEndpoint(endpoint: string): void {
     // Applied per-instance via initialize()
   }
 
@@ -366,13 +355,31 @@ export class KimiClawProvider extends BaseAgentProvider {
         installed: healthy,
         details: healthy
           ? `KimiClaw reachable at ${this.endpoint}`
-          : `KimiClaw not reachable at ${this.endpoint}. Run: docker compose up -d`,
+          : `KimiClaw not reachable at ${this.endpoint}. Run: docker compose up -d in your KCS repo`,
       };
     } catch {
       return {
         installed: false,
-        details: `KimiClaw not reachable at ${this.endpoint}. Run: docker compose up -d`,
+        details: `KimiClaw not reachable at ${this.endpoint}. Run: docker compose up -d in your KCS repo`,
       };
+    }
+  }
+
+  /**
+   * Process transcript messages for incremental transcript transformation.
+   * Called after logging raw events so canonical events appear during streaming.
+   */
+  private async processTranscriptMessages(sessionId: string): Promise<void> {
+    try {
+      const { TranscriptEventRepository } = await import('../../../storage/repositories/TranscriptEventRepository');
+      const { TranscriptMigrationRepository } = await import('../../../storage/repositories/TranscriptMigrationRepository');
+      const transformer = new (await import('../../../storage/transformers/TranscriptTransformer')).TranscriptTransformer(
+        new TranscriptEventRepository(),
+        new TranscriptMigrationRepository(),
+      );
+      await transformer.processEventsForSession(sessionId);
+    } catch (error) {
+      console.error('[KIMICLAW] Error processing transcript messages:', error);
     }
   }
 }
