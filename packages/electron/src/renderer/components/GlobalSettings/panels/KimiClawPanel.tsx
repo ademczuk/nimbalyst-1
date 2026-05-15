@@ -99,7 +99,7 @@ export function KimiClawPanel({
           'Content-Type': 'application/json',
           Cookie: loginRes.headers.get('set-cookie') || '',
         },
-        body: JSON.stringify({ name: 'nimbalyst-desktop' }),
+        body: JSON.stringify({ username: kc.username, password: kc.password }),
       });
       if (!tokenRes.ok) {
         setTokenGenStatus('error');
@@ -107,7 +107,7 @@ export function KimiClawPanel({
         return;
       }
       const tokenData = await tokenRes.json();
-      const token = tokenData?.token?.key || tokenData?.value || '';
+      const token = tokenData?.token || '';
       if (token) {
         handleConfigUpdate({ bearerToken: token, authMethod: 'bearer' });
         setTokenGenStatus('success');

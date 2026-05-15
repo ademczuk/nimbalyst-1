@@ -163,6 +163,14 @@ export class KimiClawProvider extends BaseAgentProvider {
         }
       }
 
+      // Load MCP config if available
+      let mcpServers: Record<string, unknown> | undefined;
+      try {
+        mcpServers = await this.mcpConfigService.getMcpServersConfig({ workspacePath, sessionId });
+      } catch {
+        // MCP optional — proceed without
+      }
+
       const sessionOptions = {
         workspacePath,
         model: this.config?.model || 'default',
@@ -178,6 +186,7 @@ export class KimiClawProvider extends BaseAgentProvider {
             max_steps: (this.config as any)?.maxSteps ?? 12,
             max_parallel: (this.config as any)?.maxParallel,
           },
+          mcpServers,
         } as Record<string, unknown>,
       };
 
@@ -185,10 +194,8 @@ export class KimiClawProvider extends BaseAgentProvider {
         ? await this.protocol.resumeSession(existingSwarmId || '', sessionOptions)
         : await this.protocol.createSession(sessionOptions);
 
-      // Capture protocol session ID (used by protocol for deliverable caching)
-      if (sessionId && session.id) {
-        this.sessions.captureSessionId(sessionId, session.id);
-      }
+      // Note: we don't store session.id (random UUID) here.
+      // The actual KCS swarmId is captured from the first protocol event below.
 
       const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
       transcriptAdapter.userMessage(messageWithContext, documentContext?.mode === 'planning' ? 'planning' : 'agent', attachments as any);

@@ -35,15 +35,35 @@ export async function scanKimiClawSessions(
   limit: number = 50,
   offset: number = 0,
 ): Promise<KimiClawScanResult> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (auth.mode === 'bearer' && auth.bearerToken) {
-    headers['Authorization'] = `Bearer ${auth.bearerToken}`;
-  }
-
-  const url = `${endpoint}/api/v2/swarms?limit=${limit}&offset=${offset}`;
-
   try {
     const fetch = (await import('node-fetch')).default;
+    let cookieHeader = '';
+
+    // Cookie auth: login first to obtain session cookie
+    if (auth.mode === 'cookie' && auth.username && auth.password) {
+      const loginRes = await fetch(`${endpoint}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: auth.username, password: auth.password }),
+      });
+      if (loginRes.ok) {
+        const setCookie = loginRes.headers.get('set-cookie');
+        if (setCookie) {
+          cookieHeader = setCookie.split(',').map((c: string) => c.split(';')[0].trim()).join('; ');
+        }
+      } else {
+        console.error('[KIMICLAW-SCANNER] Login failed:', loginRes.status);
+      }
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (auth.mode === 'bearer' && auth.bearerToken) {
+      headers['Authorization'] = `Bearer ${auth.bearerToken}`;
+    } else if (cookieHeader) {
+      headers['Cookie'] = cookieHeader;
+    }
+
+    const url = `${endpoint}/api/v2/swarms?limit=${limit}&offset=${offset}`;
     const r = await fetch(url, { headers });
     if (!r.ok) {
       console.error('[KIMICLAW-SCANNER] HTTP error:', r.status, await r.text());

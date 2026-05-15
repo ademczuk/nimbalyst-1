@@ -116,6 +116,7 @@ export class ModelRegistry {
     if (shouldFetch('opencode')) promises.push(this.getModelsForProvider('opencode'));
     if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', undefined, apiKeys['lmstudio_url']));
     if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli'));
+    if (shouldFetch('kimiclaw')) promises.push(this.getModelsForProvider('kimiclaw'));
 
     const results = await Promise.allSettled(promises);
 

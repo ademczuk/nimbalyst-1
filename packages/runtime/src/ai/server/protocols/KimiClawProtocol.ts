@@ -339,8 +339,24 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
     case 'orchestrator.deliverable':
       events.push({
         type: 'text',
-        content: typeof d.deliverable === 'string' ? d.deliverable : JSON.stringify(d.deliverable),
+        content: typeof d.content === 'string' ? d.content : JSON.stringify(d.content),
         metadata: { kind: 'deliverable' },
+      });
+      break;
+
+    case 'orchestrator.error':
+      events.push({
+        type: 'text',
+        content: `Swarm error: ${d.error}`,
+        metadata: { kind: 'orchestrator_error' },
+      });
+      break;
+
+    case 'orchestrator.failed':
+      events.push({
+        type: 'text',
+        content: `Swarm failed: ${d.error}`,
+        metadata: { kind: 'orchestrator_error' },
       });
       break;
 
@@ -438,8 +454,17 @@ export class KimiClawProtocol implements AgentProtocol {
       swarmOpts.mcp_servers = mcpServers;
     }
 
-    const { swarmId } = await this.transport.dispatchSwarm(taskWithContext, swarmOpts);
-    yield { type: 'text', content: `Swarm ${swarmId} dispatched`, metadata: { providerSessionId: swarmId } };
+    // Resume path: if session was resumed, stream existing swarm instead of dispatching new one
+    const resumedSwarmId = (session.raw as Record<string, unknown> | undefined)?.resumedFrom as string | undefined;
+    let swarmId: string;
+    if (resumedSwarmId) {
+      swarmId = resumedSwarmId;
+      yield { type: 'text', content: `Reattached to swarm ${swarmId}`, metadata: { providerSessionId: swarmId, reattached: true } };
+    } else {
+      const result = await this.transport.dispatchSwarm(taskWithContext, swarmOpts);
+      swarmId = result.swarmId;
+      yield { type: 'text', content: `Swarm ${swarmId} dispatched`, metadata: { providerSessionId: swarmId } };
+    }
 
     // Cancel UX gate
     let cancelled = false;
