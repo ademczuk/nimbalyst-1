@@ -134,21 +134,21 @@ export class KimiClawProvider extends BaseAgentProvider {
     let fullText = '';
 
     try {
-      const existingSessionId = this.sessions.getSessionId(sessionId || '');
+      const existingSwarmId = this.sessions.getSessionId(sessionId || '');
 
-      const isResumedSession = !!existingSessionId;
-      if (isResumedSession && existingSessionId) {
+      const isResumedSession = !!existingSwarmId;
+      if (isResumedSession && existingSwarmId) {
         // Check if the swarm is still alive
         try {
-          const snap = await this.protocol.getSnapshot(existingSessionId);
+          const snap = await this.protocol.getSnapshot(existingSwarmId);
           const status = snap.status as string;
           if (status === 'running') {
             // Reattach to existing SSE stream
-            console.log('[KIMICLAW] Reattaching to running swarm:', existingSessionId);
+            console.log('[KIMICLAW] Reattaching to running swarm:', existingSwarmId);
             // ... continue with existing session
           } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
             // Terminal — render persisted deliverable as history
-            console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSessionId);
+            console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSwarmId);
             const deliverable = snap.deliverable || snap.result;
             if (deliverable) {
               const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
@@ -182,10 +182,10 @@ export class KimiClawProvider extends BaseAgentProvider {
       };
 
       const session = isResumedSession
-        ? await this.protocol.resumeSession(existingSessionId, sessionOptions)
+        ? await this.protocol.resumeSession(existingSwarmId || '', sessionOptions)
         : await this.protocol.createSession(sessionOptions);
 
-      // Capture session ID
+      // Capture protocol session ID (used by protocol for deliverable caching)
       if (sessionId && session.id) {
         this.sessions.captureSessionId(sessionId, session.id);
       }
@@ -193,13 +193,20 @@ export class KimiClawProvider extends BaseAgentProvider {
       const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
       transcriptAdapter.userMessage(messageWithContext, documentContext?.mode === 'planning' ? 'planning' : 'agent', attachments as any);
 
-      // Stream protocol events
+      // Stream protocol events — update stored providerSessionId to swarmId when dispatch completes
+      let swarmIdCaptured = false;
+
       for await (const event of this.protocol.sendMessage(session, {
         content: messageWithContext,
         attachments,
         sessionId,
         mode: documentContext?.mode || 'agent',
       })) {
+        // Overwrite stored session id with the actual KCS swarmId (needed for resume/snapshot)
+        if (sessionId && !swarmIdCaptured && event.metadata && (event.metadata as Record<string, unknown>).providerSessionId) {
+          this.sessions.captureSessionId(sessionId, (event.metadata as Record<string, unknown>).providerSessionId as string);
+          swarmIdCaptured = true;
+        }
         if (abortController.signal.aborted) {
           throw new Error('Operation cancelled');
         }
