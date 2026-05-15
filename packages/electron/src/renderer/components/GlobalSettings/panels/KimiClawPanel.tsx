@@ -272,7 +272,7 @@ export function KimiClawPanel({
             <SettingsToggle
               variant="inline"
               name="Verbose swarm logging"
-              description="Render every raw SSE event in the transcript (for debugging cascade tier transitions)"
+              description="Render every raw SSE event in the transcript (for debugging)"
               checked={kc.verboseLogging}
               onChange={(checked) => handleConfigUpdate({ verboseLogging: checked })}
             />
