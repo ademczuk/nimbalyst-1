@@ -1,6 +1,15 @@
 /**
  * KimiClawRawParser -- maps KCS SSE events to nimbalyst canonical events.
  *
+ * KCS (KimiClawSwarm) uses a single-tier orchestration through Moonshot AI.
+ * The HTTP bridge (api_server.py) synthesizes SSE events from KCS status.
+ *
+ * Events emitted by the bridge:
+ *   orchestrator.started, swarm.configured,
+ *   agent.started, agent.phase_changed, agent.completed, agent.failed,
+ *   orchestrator.deliverable, orchestrator.error, orchestrator.failed,
+ *   coordinate.completed, coordinate.cancelled
+ *
  * Stateless across calls. Per-batch dedup state is internal to each
  * parser instance created per transformMessages() batch.
  */
@@ -40,50 +49,90 @@ export class KimiClawRawParser implements IRawMessageParser {
     const d = raw.data;
 
     switch (raw.type) {
+      // -------------------------------------------------------------------
+      // Orchestrator lifecycle
+      // -------------------------------------------------------------------
+
+      case 'orchestrator.started':
+        events.push({
+          type: 'system_message',
+          text: `Swarm ${(d.swarm_id as string)?.slice(0, 12)} started`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+
+      case 'swarm.configured':
+        events.push({
+          type: 'system_message',
+          text: `Swarm configured — max ${d.max_agents} agents, ${d.max_steps} steps${d.parallel ? ' (parallel)' : ''}`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+
+      case 'orchestrator.deliverable': {
+        const deliverable = typeof d.content === 'string' ? d.content : JSON.stringify(d.content);
+        events.push({
+          type: 'assistant_message',
+          text: deliverable,
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'orchestrator.error':
+        events.push({
+          type: 'system_message',
+          text: `Swarm error: ${d.error}`,
+          systemType: 'error',
+          createdAt: new Date(),
+        });
+        break;
+
+      case 'orchestrator.failed':
+        events.push({
+          type: 'system_message',
+          text: `Swarm failed: ${d.error}`,
+          systemType: 'error',
+          createdAt: new Date(),
+        });
+        break;
+
+      // -------------------------------------------------------------------
       // Agent lifecycle — lumpy-streaming placeholders (Fix B)
-      case 'agent.started':
-        events.push({
-          type: 'system_message',
-          text: `[Agent ${d.name || (d.agent_id as string)?.slice(0, 8)}] Starting...`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
+      // KCS emits full blobs not tokens; these placeholders keep UX alive.
+      // -------------------------------------------------------------------
 
-      case 'agent.phase_changed':
+      case 'agent.started': {
+        const agentName = (d.name as string) || (d.agent_id as string)?.slice(0, 8);
         events.push({
           type: 'system_message',
-          text: `[Agent ${d.name || (d.agent_id as string)?.slice(0, 8)}] ${d.phase}...`,
+          text: `[Agent ${agentName}] Starting...`,
           systemType: 'status',
           createdAt: new Date(),
         });
         break;
+      }
 
-      case 'agent.activity_changed':
+      case 'agent.phase_changed': {
+        const agentName2 = (d.name as string) || (d.agent_id as string)?.slice(0, 8);
         events.push({
           type: 'system_message',
-          text: `[Agent ${(d.agent_id as string)?.slice(0, 8)}] ${d.activity}`,
+          text: `[Agent ${agentName2}] ${d.phase}...`,
           systemType: 'status',
           createdAt: new Date(),
         });
         break;
+      }
 
       case 'agent.completed': {
         const output = typeof d.output === 'string' ? d.output : JSON.stringify(d.output);
-        const synthetic = d.synthetic_output_used === true;
         events.push({
           type: 'assistant_message',
-          text: output + (synthetic ? '\n\n**[SYNTH -- tier 5 fallback]**' : ''),
+          text: output,
           createdAt: new Date(),
         });
-        if (synthetic) {
-          events.push({
-            type: 'system_message',
-            text: `Agent ${(d.agent_id as string)?.slice(0, 8)} used synthetic output (tier 5 fallback)`,
-            systemType: 'status',
-            createdAt: new Date(),
-          });
-        }
         break;
       }
 
@@ -96,100 +145,10 @@ export class KimiClawRawParser implements IRawMessageParser {
         });
         break;
 
-      case 'agent.degraded':
-        events.push({
-          type: 'system_message',
-          text: `Agent ${(d.agent_id as string)?.slice(0, 8)} degraded (tier ${d.tier}): ${d.reason}`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
+      // -------------------------------------------------------------------
+      // Coordination / terminal events
+      // -------------------------------------------------------------------
 
-      case 'brain.tier':
-        events.push({
-          type: 'system_message',
-          text: `Agent ${(d.agent_id as string)?.slice(0, 8)} using tier ${d.tier}`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
-
-      // Decomposition
-      case 'decompose.started':
-        events.push({
-          type: 'tool_call_started',
-          toolName: 'decompose_task',
-          toolDisplayName: 'Decompose Task',
-          arguments: { task: d.task },
-          createdAt: new Date(),
-        });
-        break;
-
-      case 'decompose.completed':
-        events.push({
-          type: 'tool_call_completed',
-          providerToolCallId: 'decompose_task',
-          status: 'completed',
-          result: JSON.stringify({ subtaskCount: d.subtask_count, subtasks: d.subtasks }),
-        });
-        break;
-
-      // Wave events
-      case 'wave.started':
-        events.push({
-          type: 'system_message',
-          text: `Wave ${d.wave_number} started`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
-
-      case 'wave.completed':
-        events.push({
-          type: 'system_message',
-          text: `Wave ${d.wave_number} completed`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
-
-      // Orchestrator
-      case 'orchestrator.plan_summary':
-        events.push({
-          type: 'assistant_message',
-          text: typeof d.summary === 'string' ? d.summary : JSON.stringify(d.summary),
-          createdAt: new Date(),
-        });
-        break;
-
-      case 'orchestrator.deliverable':
-        events.push({
-          type: 'assistant_message',
-          text: typeof d.deliverable === 'string' ? d.deliverable : JSON.stringify(d.deliverable),
-          createdAt: new Date(),
-        });
-        break;
-
-      // Budget
-      case 'budget.update':
-        events.push({
-          type: 'system_message',
-          text: `Steps: ${d.consumed}/${d.total}`,
-          systemType: 'status',
-          createdAt: new Date(),
-        });
-        break;
-
-      case 'budget.exhausted':
-        events.push({
-          type: 'system_message',
-          text: `Budget exhausted: ${d.reason}`,
-          systemType: 'error',
-          createdAt: new Date(),
-        });
-        break;
-
-      // Terminal
       case 'coordinate.completed':
         events.push({
           type: 'turn_ended',
@@ -213,6 +172,15 @@ export class KimiClawRawParser implements IRawMessageParser {
         });
         break;
 
+      case 'coordinate.cancelled':
+        events.push({
+          type: 'system_message',
+          text: `Swarm cancelled: ${d.reason || 'user requested'}`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+
       case 'coordinate.error':
         events.push({
           type: 'system_message',
@@ -222,7 +190,20 @@ export class KimiClawRawParser implements IRawMessageParser {
         });
         break;
 
-      // Default pass-through — unknown types become raw_event only
+      // -------------------------------------------------------------------
+      // Pass-through — bridge does not emit these, but handle defensively
+      // -------------------------------------------------------------------
+
+      case 'agent.activity_changed':
+      case 'budget.update':
+      case 'wave.started':
+      case 'wave.completed':
+      case 'decompose.started':
+      case 'decompose.completed':
+        // Silently ignore — bridge doesn't emit these
+        break;
+
+      // Unknown event types — no-op (extensibility hook for future KCS versions)
       default:
         break;
     }
