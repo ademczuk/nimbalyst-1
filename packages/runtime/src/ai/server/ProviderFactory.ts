@@ -11,6 +11,7 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
+import { KimiClawProvider } from './providers/KimiClawProvider';
 import { ProviderConfig, AIProviderType, assertExhaustiveProvider } from './types';
 
 export class ProviderFactory {
@@ -68,6 +69,9 @@ export class ProviderFactory {
         break;
       case 'opencode':
         provider = new OpenCodeProvider();
+        break;
+      case 'kimiclaw':
+        provider = new KimiClawProvider();
         break;
       case 'lmstudio':
         provider = new LMStudioProvider();
