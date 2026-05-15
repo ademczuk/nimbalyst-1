@@ -12,6 +12,7 @@ export type SettingsCategory =
   | 'openai-codex'
   | 'opencode'
   | 'copilot-cli'
+  | 'kimiclaw'
   | 'lmstudio'
   | 'notifications'
   | 'voice-mode'
@@ -154,6 +155,13 @@ Best for complex coding tasks.`,
           name: 'GitHub Copilot',
           icon: <MaterialSymbol icon="terminal" size={16} />,
           statusDot: getStatusDot('copilot-cli'),
+          isAlpha: true,
+        },
+        {
+          id: 'kimiclaw',
+          name: 'KimiClaw',
+          icon: getProviderIcon('kimiclaw', { size: 16 }),
+          statusDot: getStatusDot('kimiclaw'),
           isAlpha: true,
         },
       ],
