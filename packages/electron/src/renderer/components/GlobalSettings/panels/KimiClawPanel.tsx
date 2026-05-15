@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { ProviderConfig } from '../../Settings/SettingsView';
-import { SettingsToggle, ToggleSwitch } from '../SettingsToggle';
+import { SettingsToggle } from '../SettingsToggle';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 
 interface KimiClawPanelProps {
