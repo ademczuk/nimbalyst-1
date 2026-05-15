@@ -50,10 +50,12 @@ import {
   clearSessionStreamingAtom,
   markSessionUnreadAtom,
   clearSessionUnreadAtom,
+  markSessionTurnActivityAtom,
 } from './atoms/sessionActivity';
 import type { TranscriptEvent } from '@nimbalyst/runtime/ai/server/transcript/types';
 import { TranscriptStreamAccumulator } from './transcriptStreamAccumulator';
 import { resolveOwnedWorkspacePath } from '../../shared/sessionWorkspaceRouting';
+import { transcriptSelectionTrace } from '@nimbalyst/runtime/utils/debugFlags';
 
 /**
  * Per-session accumulator of canonical events received via IPC.
@@ -269,12 +271,18 @@ export function initSessionStateListeners(): () => void {
     }
 
     const resolvedWorkspacePath = ownedWorkspacePath;
+    const turnBoundaryTimestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
 
     switch (type) {
       // Session is actively running
       case 'session:started':
         store.set(sessionProcessingAtom(sessionId), true);
         store.set(markSessionStreamingAtom, { sessionId, workspacePath: resolvedWorkspacePath });
+        store.set(markSessionTurnActivityAtom, {
+          sessionId,
+          workspacePath: resolvedWorkspacePath,
+          timestamp: turnBoundaryTimestamp,
+        });
         break;
 
       case 'session:streaming':
@@ -302,6 +310,11 @@ export function initSessionStateListeners(): () => void {
         // Treat "waiting on user" as still processing for rail badge purposes —
         // the user typically hasn't switched away because of the prompt.
         store.set(markSessionStreamingAtom, { sessionId, workspacePath: resolvedWorkspacePath });
+        store.set(markSessionTurnActivityAtom, {
+          sessionId,
+          workspacePath: resolvedWorkspacePath,
+          timestamp: turnBoundaryTimestamp,
+        });
         break;
 
       // Session has finished (successfully or with error)
@@ -313,6 +326,14 @@ export function initSessionStateListeners(): () => void {
         // case. We intentionally do NOT re-clear them here; the streaming
         // atom is idempotent but the duplicate would obscure the invariant
         // that terminal-event cleanup is workspace-agnostic.
+        // markSessionTurnActivityAtom stays here because it requires a
+        // concrete workspacePath and feeds sidebar ordering for the owning
+        // workspace only.
+        store.set(markSessionTurnActivityAtom, {
+          sessionId,
+          workspacePath: resolvedWorkspacePath,
+          timestamp: turnBoundaryTimestamp,
+        });
 
         // Clear any pending throttle timer for this session - the final reload below
         // will fetch the complete state, so a stale throttled reload is unnecessary
@@ -468,6 +489,12 @@ export function initSessionStateListeners(): () => void {
     }
 
     const workspacePath = ownedWorkspacePath;
+
+    transcriptSelectionTrace('sessionStateListeners.messageLogged', {
+      sessionId,
+      direction,
+      workspacePath,
+    });
 
     // Throttle session data reload per session (leading + trailing edge).
     // During active streaming, message-logged fires on every chunk which would
@@ -918,6 +945,13 @@ export function initSessionStateListeners(): () => void {
   // ---------------------------------------------------------------------------
   const handleTranscriptEvent = (transcriptEvent: TranscriptEvent) => {
     if (!transcriptEvent.sessionId) return;
+    transcriptSelectionTrace('sessionStateListeners.transcriptEvent', {
+      sessionId: transcriptEvent.sessionId,
+      eventType: transcriptEvent.eventType,
+      eventId: transcriptEvent.id,
+      parentEventId: transcriptEvent.parentEventId ?? null,
+      sequence: transcriptEvent.sequence,
+    });
     // The accumulator decides whether the change is a cheap in-place patch
     // or requires a full re-projection, then flushes once per animation
     // frame. See `transcriptStreamAccumulator.ts` for the rationale.

@@ -35,6 +35,7 @@ import { worktreeDisplayNameUpdateAtom } from '../../store/atoms/worktrees';
 import { blitzCreatedAtom, blitzDisplayNameUpdateAtom } from '../../store/atoms/blitz';
 import { superLoopListAtom, upsertSuperLoopAtom, removeSuperLoopAtom } from '../../store/atoms/superLoop';
 import { useSuperLoopDialog } from '../../hooks/useSuperLoop';
+import { workspaceSessionTurnActivityAtom } from '../../store/atoms/sessionActivity';
 import type { SuperLoop } from '../../../shared/types/superLoop';
 import { store } from '@nimbalyst/runtime/store';
 import { createMetaAgentSession } from '../../utils/metaAgentUtils';
@@ -78,6 +79,14 @@ interface WorktreeWithStatus extends WorktreeData {
   };
 }
 
+type UnifiedListItem =
+  | { type: 'session'; session: SessionItem; timestamp: number; rank: number; isWorktreeSession?: boolean }
+  | { type: 'workstream'; session: SessionItem; sessions: SessionItem[]; timestamp: number; rank: number }
+  | { type: 'worktree'; worktreeId: string; sessions: SessionItem[]; timestamp: number; rank: number }
+  | { type: 'blitz'; blitzId: string; worktrees: { worktreeId: string; sessions: SessionItem[] }[]; timestamp: number; rank: number }
+  | { type: 'superLoop'; loop: SuperLoop; timestamp: number; rank: number }
+  | { type: 'metaAgent'; metaSession: SessionItem; childSessions: SessionItem[]; timestamp: number; rank: number };
+
 // Search filter options for content search
 type SearchTimeRange = '7d' | '30d' | '90d' | 'all';
 type SearchDirection = 'all' | 'input' | 'output';
@@ -86,6 +95,8 @@ interface SearchFilters {
   timeRange: SearchTimeRange;
   direction: SearchDirection;
 }
+
+const ORDER_THROTTLE_MS = 3000;
 
 const DEFAULT_SEARCH_FILTERS: SearchFilters = {
   timeRange: '30d',  // Default to last 30 days for performance
@@ -104,6 +115,51 @@ const DIRECTION_LABELS: Record<SearchDirection, string> = {
   'input': 'User prompts only',
   'output': 'Assistant only',
 };
+
+function getLiveSessionOrderTimestamp(
+  session: Pick<SessionItem, 'id' | 'createdAt' | 'updatedAt'>,
+  options: {
+    sortBy: 'updated' | 'created';
+    mode: 'chat' | 'agent';
+    turnActivity: Map<string, number>;
+  }
+): number {
+  const { sortBy, mode, turnActivity } = options;
+  if (sortBy === 'created') {
+    return session.createdAt;
+  }
+  if (mode === 'agent') {
+    const turnBoundaryTimestamp = turnActivity.get(session.id);
+    if (turnBoundaryTimestamp !== undefined) {
+      return turnBoundaryTimestamp;
+    }
+  }
+  return session.updatedAt || session.createdAt;
+}
+
+function mapsHaveSameKeys(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const key of a.keys()) {
+    if (!b.has(key)) return false;
+  }
+  return true;
+}
+
+function mapsHaveEqualEntries(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (!mapsHaveSameKeys(a, b)) return false;
+  for (const [key, value] of a) {
+    if (b.get(key) !== value) return false;
+  }
+  return true;
+}
+
+function compareNumbersDesc(a: number, b: number): number {
+  return b - a;
+}
+
+function compareNumbersAsc(a: number, b: number): number {
+  return a - b;
+}
 
 interface SessionHistoryProps {
   workspacePath: string;
@@ -228,6 +284,7 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
 
   // Get the session registry to look up parent session IDs
   const sessionRegistry = useAtomValue(sessionRegistryAtom);
+  const workspaceTurnActivity = useAtomValue(workspaceSessionTurnActivityAtom(workspacePath));
 
   // Get the parent session ID of the active session (if it's a child)
   const activeSessionParentId = activeSessionId
@@ -278,6 +335,10 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
   const [workstreamChildrenCache, setWorkstreamChildrenCache] = useState<Map<string, SessionItem[]>>(new Map()); // Cache workstream children
   const [blitzCache, setBlitzCache] = useState<Map<string, BlitzData>>(new Map()); // Cache blitz data
   const pendingWorkstreamChildrenFetchesRef = useRef<Set<string>>(new Set());
+  const orderThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const orderLastCommittedAtRef = useRef(0);
+  const orderPendingMapRef = useRef<Map<string, number> | null>(null);
+  const orderStrategyKeyRef = useRef(`${mode}:${sortBy}`);
 
   // View mode persisted via agentMode atoms
   const viewMode = useAtomValue(viewModeAtom);
@@ -343,6 +404,96 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
   // Extract workspace name from path
   const workspaceName = getFileName(workspacePath) || 'Workspace';
   const workspaceColor = generateWorkspaceAccentColor(workspacePath);
+  const useThrottledTurnOrdering = mode === 'agent' && sortBy === 'updated';
+  const liveOrderTimestampMap = useMemo(() => {
+    const timestamps = new Map<string, number>();
+    for (const session of sessionRegistry.values()) {
+      timestamps.set(session.id, getLiveSessionOrderTimestamp(session, {
+        sortBy,
+        mode,
+        turnActivity: workspaceTurnActivity,
+      }));
+    }
+    return timestamps;
+  }, [sessionRegistry, sortBy, mode, workspaceTurnActivity]);
+  const [displayOrderTimestampMap, setDisplayOrderTimestampMap] = useState<Map<string, number>>(() => liveOrderTimestampMap);
+  const [displayOrderRankMap, setDisplayOrderRankMap] = useState<Map<string, number>>(() => {
+    const rankedSessions = Array.from(sessionRegistry.values())
+      .sort((a, b) => {
+        const timestampDiff = compareNumbersDesc(
+          liveOrderTimestampMap.get(a.id) ?? 0,
+          liveOrderTimestampMap.get(b.id) ?? 0,
+        );
+        if (timestampDiff !== 0) return timestampDiff;
+        const createdDiff = compareNumbersDesc(a.createdAt, b.createdAt);
+        if (createdDiff !== 0) return createdDiff;
+        return a.id.localeCompare(b.id);
+      });
+    return new Map(rankedSessions.map((session, index) => [session.id, index]));
+  });
+  const buildCommittedRankMap = useCallback((nextMap: Map<string, number>) => {
+    const rankedSessions = Array.from(sessionRegistry.values())
+      .sort((a, b) => {
+        const timestampDiff = compareNumbersDesc(
+          nextMap.get(a.id) ?? 0,
+          nextMap.get(b.id) ?? 0,
+        );
+        if (timestampDiff !== 0) return timestampDiff;
+
+        const previousRankA = displayOrderRankMap.get(a.id);
+        const previousRankB = displayOrderRankMap.get(b.id);
+        if (previousRankA !== undefined && previousRankB !== undefined && previousRankA !== previousRankB) {
+          return compareNumbersAsc(previousRankA, previousRankB);
+        }
+
+        const createdDiff = compareNumbersDesc(a.createdAt, b.createdAt);
+        if (createdDiff !== 0) return createdDiff;
+
+        return a.id.localeCompare(b.id);
+      });
+    return new Map(rankedSessions.map((session, index) => [session.id, index]));
+  }, [sessionRegistry, displayOrderRankMap]);
+  const getDisplayedOrderTimestamp = useCallback((session: Pick<SessionItem, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const liveTimestamp = getLiveSessionOrderTimestamp(session, {
+      sortBy,
+      mode,
+      turnActivity: workspaceTurnActivity,
+    });
+    if (!useThrottledTurnOrdering) {
+      return liveTimestamp;
+    }
+    return displayOrderTimestampMap.get(session.id) ?? liveTimestamp;
+  }, [sortBy, mode, workspaceTurnActivity, useThrottledTurnOrdering, displayOrderTimestampMap]);
+  const getDisplayedOrderRank = useCallback((sessionId: string) => {
+    return displayOrderRankMap.get(sessionId) ?? Number.MAX_SAFE_INTEGER;
+  }, [displayOrderRankMap]);
+  const compareSessionOrder = useCallback((
+    a: Pick<SessionItem, 'id' | 'createdAt' | 'updatedAt'>,
+    b: Pick<SessionItem, 'id' | 'createdAt' | 'updatedAt'>
+  ) => {
+    const timestampDiff = compareNumbersDesc(
+      getDisplayedOrderTimestamp(a),
+      getDisplayedOrderTimestamp(b),
+    );
+    if (timestampDiff !== 0) return timestampDiff;
+
+    const rankDiff = compareNumbersAsc(
+      getDisplayedOrderRank(a.id),
+      getDisplayedOrderRank(b.id),
+    );
+    if (rankDiff !== 0) return rankDiff;
+
+    const createdDiff = compareNumbersDesc(a.createdAt, b.createdAt);
+    if (createdDiff !== 0) return createdDiff;
+    return a.id.localeCompare(b.id);
+  }, [getDisplayedOrderRank, getDisplayedOrderTimestamp]);
+  const compareUnifiedItems = useCallback((a: UnifiedListItem, b: UnifiedListItem) => {
+    const timestampDiff = compareNumbersDesc(a.timestamp, b.timestamp);
+    if (timestampDiff !== 0) return timestampDiff;
+    const rankDiff = compareNumbersAsc(a.rank, b.rank);
+    if (rankDiff !== 0) return rankDiff;
+    return a.type.localeCompare(b.type);
+  }, []);
 
   // Load all sessions - now just triggers atom refresh
   // The atom handles IPC calls and state updates
@@ -498,7 +649,7 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
 
     if (!searchQuery.trim()) {
       // No search query - show all sessions (filtered by mode)
-      setSessions(sessionsToFilter);
+      setSessions([...sessionsToFilter].sort(compareSessionOrder));
       return;
     }
 
@@ -507,8 +658,84 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
     const filtered = sessionsToFilter.filter(session =>
       (session.title ?? '').toLowerCase().includes(query)
     );
-    setSessions(filtered);
-  }, [searchQuery, allSessions, mode]);
+    setSessions(filtered.sort(compareSessionOrder));
+  }, [searchQuery, allSessions, mode, compareSessionOrder]);
+
+  useEffect(() => {
+    const commitOrderMap = (nextMap: Map<string, number>) => {
+      orderPendingMapRef.current = null;
+      orderLastCommittedAtRef.current = Date.now();
+      setDisplayOrderTimestampMap(nextMap);
+      setDisplayOrderRankMap(buildCommittedRankMap(nextMap));
+    };
+    const strategyKey = `${mode}:${sortBy}`;
+    const strategyChanged = orderStrategyKeyRef.current !== strategyKey;
+    orderStrategyKeyRef.current = strategyKey;
+
+    if (!useThrottledTurnOrdering) {
+      if (orderThrottleTimerRef.current) {
+        clearTimeout(orderThrottleTimerRef.current);
+        orderThrottleTimerRef.current = null;
+      }
+      commitOrderMap(liveOrderTimestampMap);
+      return;
+    }
+
+    if (mapsHaveEqualEntries(displayOrderTimestampMap, liveOrderTimestampMap)) {
+      return;
+    }
+
+    if (strategyChanged) {
+      if (orderThrottleTimerRef.current) {
+        clearTimeout(orderThrottleTimerRef.current);
+        orderThrottleTimerRef.current = null;
+      }
+      commitOrderMap(liveOrderTimestampMap);
+      return;
+    }
+
+    // Membership changes should be reflected immediately. The throttle is only
+    // for reshuffling the existing visible items during bursts of session activity.
+    if (!mapsHaveSameKeys(displayOrderTimestampMap, liveOrderTimestampMap)) {
+      if (orderThrottleTimerRef.current) {
+        clearTimeout(orderThrottleTimerRef.current);
+        orderThrottleTimerRef.current = null;
+      }
+      commitOrderMap(liveOrderTimestampMap);
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - orderLastCommittedAtRef.current;
+    if (orderLastCommittedAtRef.current === 0 || elapsed >= ORDER_THROTTLE_MS) {
+      if (orderThrottleTimerRef.current) {
+        clearTimeout(orderThrottleTimerRef.current);
+        orderThrottleTimerRef.current = null;
+      }
+      commitOrderMap(liveOrderTimestampMap);
+      return;
+    }
+
+    orderPendingMapRef.current = liveOrderTimestampMap;
+    if (!orderThrottleTimerRef.current) {
+      orderThrottleTimerRef.current = setTimeout(() => {
+        orderThrottleTimerRef.current = null;
+        const pendingMap = orderPendingMapRef.current;
+        if (pendingMap) {
+          commitOrderMap(pendingMap);
+        }
+      }, ORDER_THROTTLE_MS - elapsed);
+    }
+  }, [buildCommittedRankMap, displayOrderTimestampMap, liveOrderTimestampMap, useThrottledTurnOrdering]);
+
+  useEffect(() => {
+    return () => {
+      if (orderThrottleTimerRef.current) {
+        clearTimeout(orderThrottleTimerRef.current);
+        orderThrottleTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-select first session when there's no active session
   // This ensures a session is always selected when switching to Agent mode
@@ -1655,12 +1882,12 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
           existing.sessions.push(session);
           // For 'updated', track the latest session update. For 'created', we'll use worktree.createdAt later
           if (sortBy === 'updated') {
-            const sessionTimestamp = session.updatedAt || session.createdAt;
+            const sessionTimestamp = getDisplayedOrderTimestamp(session);
             existing.timestamp = Math.max(existing.timestamp, sessionTimestamp);
           }
         } else {
           // Initial timestamp (will be replaced with worktree.createdAt for 'created' sort)
-          const initialTimestamp = sortBy === 'updated' ? (session.updatedAt || session.createdAt) : 0;
+          const initialTimestamp = sortBy === 'updated' ? getDisplayedOrderTimestamp(session) : 0;
           groups.set(session.worktreeId, { sessions: [session], timestamp: initialTimestamp });
         }
       }
@@ -1686,7 +1913,7 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
           if (group) {
             group.sessions.push(child);
             if (sortBy === 'updated') {
-              const childTimestamp = child.updatedAt || child.createdAt;
+              const childTimestamp = getDisplayedOrderTimestamp(child);
               group.timestamp = Math.max(group.timestamp, childTimestamp);
             }
           }
@@ -1695,21 +1922,12 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
     }
 
     return groups;
-  }, [sessions, sortBy, sessionRegistry]);
+  }, [sessions, sortBy, sessionRegistry, getDisplayedOrderTimestamp]);
 
   // Get all worktree IDs for batch fetching
   const sortedWorktreeIds = useMemo(() => {
     return Array.from(worktreeGroupsData.keys());
   }, [worktreeGroupsData]);
-
-  // Create unified list items that can be a session, workstream, worktree group, blitz group, or super loop
-  type UnifiedListItem =
-    | { type: 'session'; session: SessionItem; timestamp: number; isWorktreeSession?: boolean }
-    | { type: 'workstream'; session: SessionItem; sessions: SessionItem[]; timestamp: number }
-    | { type: 'worktree'; worktreeId: string; sessions: SessionItem[]; timestamp: number }
-    | { type: 'blitz'; blitzId: string; worktrees: { worktreeId: string; sessions: SessionItem[] }[]; timestamp: number }
-    | { type: 'superLoop'; loop: SuperLoop; timestamp: number }
-    | { type: 'metaAgent'; metaSession: SessionItem; childSessions: SessionItem[]; timestamp: number };
 
   // Build unified time-grouped data with both sessions and worktrees interleaved
   const groupedItems = useMemo(() => {
@@ -1738,12 +1956,16 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
         if (session.agentRole === 'meta-agent') {
           const childSessions = sessions
             .filter(s => s.createdBySessionId === session.id)
-            .sort((a, b) => b.updatedAt - a.updatedAt);
+            .sort(compareSessionOrder);
           const latestChildTimestamp = childSessions.length > 0
-            ? Math.max(...childSessions.map(s => s.updatedAt || s.createdAt))
+            ? Math.max(...childSessions.map(s => getDisplayedOrderTimestamp(s)))
             : 0;
+          const rank = Math.min(
+            getDisplayedOrderRank(session.id),
+            ...childSessions.map(s => getDisplayedOrderRank(s.id)),
+          );
           const timestamp = Math.max(
-            timestampField === 'updatedAt' ? (session.updatedAt || session.createdAt) : session.createdAt,
+            timestampField === 'updatedAt' ? getDisplayedOrderTimestamp(session) : session.createdAt,
             latestChildTimestamp
           );
           metaAgentItems.push({
@@ -1751,11 +1973,12 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
             metaSession: session,
             childSessions,
             timestamp,
+            rank,
           });
         }
       }
       // Sort meta-agent items by timestamp (newest first)
-      metaAgentItems.sort((a, b) => b.timestamp - a.timestamp);
+      metaAgentItems.sort(compareUnifiedItems);
     }
 
     // Add regular sessions and workstreams (those without worktreeId)
@@ -1776,12 +1999,16 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
           // This ensures workstreams appear based on their most recent activity
           let timestamp: number;
           if (timestampField === 'updatedAt' && cachedChildren.length > 0) {
-            timestamp = Math.max(...cachedChildren.map(child => child.updatedAt || child.createdAt));
+            timestamp = Math.max(...cachedChildren.map(child => getDisplayedOrderTimestamp(child)));
           } else {
-            timestamp = timestampField === 'updatedAt' ? (session.updatedAt || session.createdAt) : session.createdAt;
+            timestamp = timestampField === 'updatedAt' ? getDisplayedOrderTimestamp(session) : session.createdAt;
           }
 
-          const item = { type: 'workstream' as const, session, sessions: cachedChildren, timestamp };
+          const rank = Math.min(
+            getDisplayedOrderRank(session.id),
+            ...cachedChildren.map(child => getDisplayedOrderRank(child.id)),
+          );
+          const item = { type: 'workstream' as const, session, sessions: cachedChildren, timestamp, rank };
 
           if (session.isPinned) {
             pinnedItems.push(item);
@@ -1789,9 +2016,9 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
             items.push(item);
           }
         } else {
-          const timestamp = timestampField === 'updatedAt' ? (session.updatedAt || session.createdAt) : session.createdAt;
+          const timestamp = timestampField === 'updatedAt' ? getDisplayedOrderTimestamp(session) : session.createdAt;
           // Regular session
-          const item = { type: 'session' as const, session, timestamp };
+          const item = { type: 'session' as const, session, timestamp, rank: getDisplayedOrderRank(session.id) };
 
           if (session.isPinned) {
             pinnedItems.push(item);
@@ -1862,13 +2089,14 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
       // Use the most recent session timestamp for the blitz group
       const allSessions = worktrees.flatMap(w => w.sessions);
       let timestamp = Math.max(...allSessions.map(s =>
-        timestampField === 'updatedAt' ? (s.updatedAt || s.createdAt) : s.createdAt
+        timestampField === 'updatedAt' ? getDisplayedOrderTimestamp(s) : s.createdAt
       ));
       if (sortBy === 'created' && blitzData?.createdAt) {
         timestamp = blitzData.createdAt;
       }
 
-      const item = { type: 'blitz' as const, blitzId, worktrees, timestamp };
+      const rank = Math.min(...allSessions.map(s => getDisplayedOrderRank(s.id)));
+      const item = { type: 'blitz' as const, blitzId, worktrees, timestamp, rank };
 
       if (blitzData?.isPinned) {
         pinnedItems.push(item);
@@ -1884,8 +2112,14 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
         // Single session in worktree - display as a regular session item (flat, not grouped)
         // but with the worktree icon to indicate it's a worktree session
         const session = data.sessions[0];
-        const timestamp = timestampField === 'updatedAt' ? (session.updatedAt || session.createdAt) : session.createdAt;
-        const item = { type: 'session' as const, session, timestamp, isWorktreeSession: true };
+        const timestamp = timestampField === 'updatedAt' ? getDisplayedOrderTimestamp(session) : session.createdAt;
+        const item = {
+          type: 'session' as const,
+          session,
+          timestamp,
+          rank: getDisplayedOrderRank(session.id),
+          isWorktreeSession: true
+        };
 
         if (session.isPinned) {
           pinnedItems.push(item);
@@ -1900,7 +2134,8 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
           const worktreeData = worktreeCache.get(worktreeId);
           timestamp = worktreeData?.createdAt || 0;
         }
-        const item = { type: 'worktree' as const, worktreeId, sessions: data.sessions, timestamp };
+        const rank = Math.min(...data.sessions.map(s => getDisplayedOrderRank(s.id)));
+        const item = { type: 'worktree' as const, worktreeId, sessions: data.sessions, timestamp, rank };
 
         const worktreeData = worktreeCache.get(worktreeId);
         if (worktreeData?.isPinned) {
@@ -1914,7 +2149,11 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
     // Add Super Loops as grouped items
     for (const loop of superLoops) {
       const timestamp = timestampField === 'updatedAt' ? loop.updatedAt : loop.createdAt;
-      const item = { type: 'superLoop' as const, loop, timestamp };
+      const loopSessions = worktreeGroupsData.get(loop.worktreeId)?.sessions ?? [];
+      const rank = loopSessions.length > 0
+        ? Math.min(...loopSessions.map(session => getDisplayedOrderRank(session.id)))
+        : Number.MAX_SAFE_INTEGER;
+      const item = { type: 'superLoop' as const, loop, timestamp, rank };
       if (loop.isPinned) {
         pinnedItems.push(item);
       } else {
@@ -1940,11 +2179,11 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
 
     // Sort items within each group by timestamp (newest first)
     for (const groupKey of Object.keys(groups) as TimeGroupKey[]) {
-      groups[groupKey].sort((a, b) => b.timestamp - a.timestamp);
+      groups[groupKey].sort(compareUnifiedItems);
     }
 
     // Sort pinned items by timestamp (newest first)
-    pinnedItems.sort((a, b) => b.timestamp - a.timestamp);
+    pinnedItems.sort(compareUnifiedItems);
 
     // Build the result with meta-agent items always first
     const result: Record<string, UnifiedListItem[]> = {};
@@ -1967,7 +2206,7 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
     }
 
     return result as Record<TimeGroupKey | 'Pinned' | 'Meta Agent', UnifiedListItem[]>;
-  }, [sessions, worktreeGroupsData, sortBy, worktreeCache, workstreamChildrenCache, blitzCache, superLoops, showArchived, isMetaAgentEnabled]);
+  }, [sessions, worktreeGroupsData, sortBy, worktreeCache, workstreamChildrenCache, blitzCache, superLoops, showArchived, isMetaAgentEnabled, getDisplayedOrderRank, getDisplayedOrderTimestamp, compareSessionOrder, compareUnifiedItems]);
 
   const groupKeys = Object.keys(groupedItems) as (TimeGroupKey | 'Pinned' | 'Meta Agent')[];
 

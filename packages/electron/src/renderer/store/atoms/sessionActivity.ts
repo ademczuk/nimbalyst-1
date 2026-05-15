@@ -18,6 +18,7 @@
  */
 
 import { atom } from 'jotai';
+import { atomFamily } from '../debug/atomFamilyRegistry';
 
 export interface WorkspaceActivity {
   /** Session IDs currently streaming for this workspace. */
@@ -38,6 +39,25 @@ export const globalSessionActivityAtom = atom<Map<string, WorkspaceActivity>>(ne
  * the path because the session payload may have stripped it.
  */
 export const sessionActivityIndexAtom = atom<Map<string, string>>(new Map());
+const EMPTY_TURN_ACTIVITY = new Map<string, number>();
+
+/**
+ * Map<workspacePath, Map<sessionId, timestamp>> of the latest turn-boundary
+ * activity observed in the renderer. This is intentionally separate from the
+ * persisted session `updatedAt`: agent-mode session history can sort from
+ * turn lifecycle boundaries (start / waiting / complete) without reshuffling
+ * on every streamed message or metadata patch.
+ */
+export const globalSessionTurnActivityAtom = atom<Map<string, Map<string, number>>>(new Map());
+
+/**
+ * Per-workspace view of the latest turn-boundary activity timestamps.
+ * SessionHistory subscribes to this instead of the global map so unrelated
+ * workspace updates do not cause the current sidebar to recompute.
+ */
+export const workspaceSessionTurnActivityAtom = atomFamily((workspacePath: string) =>
+  atom((get) => get(globalSessionTurnActivityAtom).get(workspacePath) ?? EMPTY_TURN_ACTIVITY)
+);
 
 function emptyActivity(): WorkspaceActivity {
   return { streaming: new Set(), unread: new Set() };
@@ -55,6 +75,28 @@ export const markSessionStreamingAtom = atom(
     entry.streaming = new Set(entry.streaming).add(sessionId);
     map.set(workspacePath, entry);
     set(globalSessionActivityAtom, map);
+
+    const index = new Map(get(sessionActivityIndexAtom));
+    index.set(sessionId, workspacePath);
+    set(sessionActivityIndexAtom, index);
+  }
+);
+
+/**
+ * Record that a session crossed a turn boundary in the agent lifecycle.
+ * This feeds throttled sidebar ordering in agent mode.
+ */
+export const markSessionTurnActivityAtom = atom(
+  null,
+  (get, set, payload: { sessionId: string; workspacePath: string; timestamp?: number }) => {
+    const { sessionId, workspacePath } = payload;
+    const timestamp = payload.timestamp ?? Date.now();
+
+    const workspaceMap = new Map(get(globalSessionTurnActivityAtom));
+    const turnsForWorkspace = new Map(workspaceMap.get(workspacePath) ?? new Map<string, number>());
+    turnsForWorkspace.set(sessionId, timestamp);
+    workspaceMap.set(workspacePath, turnsForWorkspace);
+    set(globalSessionTurnActivityAtom, workspaceMap);
 
     const index = new Map(get(sessionActivityIndexAtom));
     index.set(sessionId, workspacePath);
@@ -143,9 +185,18 @@ export const clearWorkspaceActivityAtom = atom(
   null,
   (get, set, workspacePath: string) => {
     const map = new Map(get(globalSessionActivityAtom));
-    if (!map.has(workspacePath)) return;
-    map.delete(workspacePath);
-    set(globalSessionActivityAtom, map);
+    const hadActivity = map.delete(workspacePath);
+    if (hadActivity) {
+      set(globalSessionActivityAtom, map);
+    }
+
+    const turnMap = new Map(get(globalSessionTurnActivityAtom));
+    const hadTurnActivity = turnMap.delete(workspacePath);
+    if (hadTurnActivity) {
+      set(globalSessionTurnActivityAtom, turnMap);
+    }
+
+    if (!hadActivity && !hadTurnActivity) return;
 
     const index = new Map(get(sessionActivityIndexAtom));
     let mutated = false;

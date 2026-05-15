@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createStore } from 'jotai';
 import {
   globalSessionActivityAtom,
+  globalSessionTurnActivityAtom,
   sessionActivityIndexAtom,
   markSessionStreamingAtom,
+  markSessionTurnActivityAtom,
   clearSessionStreamingAtom,
   markSessionUnreadAtom,
   clearSessionUnreadAtom,
@@ -75,10 +77,24 @@ describe('sessionActivity atoms', () => {
     });
   });
 
+  describe('turn activity', () => {
+    it('records turn-boundary activity timestamps per workspace', () => {
+      jotaiStore.set(markSessionTurnActivityAtom, {
+        sessionId: 's1',
+        workspacePath: PATH_A,
+        timestamp: 1234,
+      });
+
+      expect(jotaiStore.get(globalSessionTurnActivityAtom).get(PATH_A)?.get('s1')).toBe(1234);
+      expect(jotaiStore.get(sessionActivityIndexAtom).get('s1')).toBe(PATH_A);
+    });
+  });
+
   describe('clearWorkspaceActivityAtom', () => {
     it('removes every entry for a workspace path and prunes the index', () => {
       jotaiStore.set(markSessionStreamingAtom, { sessionId: 's1', workspacePath: PATH_A });
       jotaiStore.set(markSessionUnreadAtom, { sessionId: 's2', workspacePath: PATH_A });
+      jotaiStore.set(markSessionTurnActivityAtom, { sessionId: 's4', workspacePath: PATH_A, timestamp: 4000 });
       jotaiStore.set(markSessionStreamingAtom, { sessionId: 's3', workspacePath: PATH_B });
 
       jotaiStore.set(clearWorkspaceActivityAtom, PATH_A);
@@ -86,16 +102,28 @@ describe('sessionActivity atoms', () => {
       const map = jotaiStore.get(globalSessionActivityAtom);
       expect(map.has(PATH_A)).toBe(false);
       expect(map.get(PATH_B)?.streaming.has('s3')).toBe(true);
+      expect(jotaiStore.get(globalSessionTurnActivityAtom).has(PATH_A)).toBe(false);
 
       const index = jotaiStore.get(sessionActivityIndexAtom);
       expect(index.has('s1')).toBe(false);
       expect(index.has('s2')).toBe(false);
+      expect(index.has('s4')).toBe(false);
       expect(index.get('s3')).toBe(PATH_B);
+    });
+
+    it('clears turn activity even when no streaming/unread activity exists', () => {
+      jotaiStore.set(markSessionTurnActivityAtom, { sessionId: 's1', workspacePath: PATH_A, timestamp: 1234 });
+
+      jotaiStore.set(clearWorkspaceActivityAtom, PATH_A);
+
+      expect(jotaiStore.get(globalSessionTurnActivityAtom).has(PATH_A)).toBe(false);
+      expect(jotaiStore.get(sessionActivityIndexAtom).has('s1')).toBe(false);
     });
 
     it('is a no-op when the workspace was never tracked', () => {
       jotaiStore.set(clearWorkspaceActivityAtom, '/never/seen');
       expect(jotaiStore.get(globalSessionActivityAtom).size).toBe(0);
+      expect(jotaiStore.get(globalSessionTurnActivityAtom).size).toBe(0);
     });
   });
 
