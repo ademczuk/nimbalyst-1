@@ -353,6 +353,31 @@ const REMINDER_KIND_LABELS: Record<string, string> = {
   session_naming: 'Session metadata reminder',
 };
 
+/**
+ * Compact one-line renderer for ephemeral progress events
+ * (systemType: 'status' or 'init'). KCS uses these heavily for the
+ * cascade tier ticker (trying codex... codex failed... claude_cli
+ * succeeded in 43s) and per-agent dividers. Rendering them all as
+ * collapsed SystemReminderCards turns the transcript into a wall of
+ * "SYSTEM REMINDER" rows that hide the actual signal.
+ */
+const StatusLine: React.FC<{ message: TranscriptViewMessage }> = ({ message }) => {
+  const text = (message.text ?? '').trim();
+  if (!text) return null;
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-0.5 ml-6 text-[11px] text-[var(--nim-text-faint)] leading-snug"
+      title={text}
+    >
+      <span className="shrink-0 select-none" aria-hidden="true">·</span>
+      <span className="flex-1 min-w-0 truncate">{text}</span>
+      <span className="shrink-0 text-[10px] opacity-70">
+        {formatMessageTime(message.createdAt?.getTime() ?? 0)}
+      </span>
+    </div>
+  );
+};
+
 const SystemReminderCard: React.FC<{
   message: TranscriptViewMessage;
 }> = ({ message }) => {
@@ -1984,6 +2009,28 @@ export const RichTranscriptView = React.forwardRef<
                               <span className="text-[10px] shrink-0">{formatMessageTime(message.createdAt?.getTime() ?? 0)}</span>
                             </div>
                           )}
+                        </div>
+                      );
+                    }
+
+                    // Progress / status events render as a compact one-line
+                    // ticker, NOT as the loud SYSTEM REMINDER card. KCS uses
+                    // systemType:'status' for cascade tier progress and
+                    // per-agent dividers; collapsing those into reminder
+                    // cards drowned the actual signal in a wall of identical
+                    // rows.
+                    if (message.type === 'system_message' &&
+                        (message.systemMessage?.systemType === 'status' ||
+                         message.systemMessage?.systemType === 'init')) {
+                      return (
+                        <div
+                          key={`${sessionId}-${index}`}
+                          data-message-index={index}
+                          ref={(el) => {
+                            if (el) messageRefs.current.set(index, el);
+                          }}
+                        >
+                          <StatusLine message={message} />
                         </div>
                       );
                     }
