@@ -24,6 +24,10 @@ export interface KimiClawSwarmOptions {
   max_agents?: number;
   max_steps?: number;
   max_parallel?: number;
+  // Per-swarm hard wall-clock timeout in seconds. KCS watchdog cancels
+  // the swarm at this elapsed time and emits a clean failure event.
+  // Range 10-3600. Default 300 if omitted (matches KCS server default).
+  timeout_s?: number;
   mcp_servers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 }
 
