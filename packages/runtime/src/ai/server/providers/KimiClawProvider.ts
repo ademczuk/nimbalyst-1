@@ -196,7 +196,13 @@ export class KimiClawProvider extends BaseAgentProvider {
           password: (this.config as any)?.password || 'admin',
           bearerToken: (this.config as any)?.bearerToken || '',
           swarmDefaults: {
-            persona_mode: (this.config as any)?.personaMode ?? true,
+            // The settings panel stores the user's choice under `defaultMode`
+            // as the literal string 'crew' | 'classic' (see KimiClawPanel.tsx).
+            // Translate to KCS's persona_mode boolean here. The previous read
+            // key `personaMode` never matched any saved field, so persona_mode
+            // was always true and the user's "Classic" selection was silently
+            // ignored.
+            persona_mode: ((this.config as any)?.defaultMode ?? 'crew') !== 'classic',
             max_agents: (this.config as any)?.maxAgents ?? 4,
             max_steps: (this.config as any)?.maxSteps ?? 12,
             max_parallel: (this.config as any)?.maxParallel,
