@@ -211,11 +211,62 @@ export class KimiClawRawParser implements IRawMessageParser {
 
       case 'agent.activity_changed':
       case 'budget.update':
-      case 'wave.started':
-      case 'wave.completed':
       case 'decompose.started':
         // Silently ignore - bridge doesn't emit these
         break;
+
+      // -------------------------------------------------------------------
+      // Wave coordination - the orchestrator now emits these around the
+      // parallel-execution wave loop so the operator sees the wave
+      // structure of multi-agent swarms (wave 1 of 3, 4 agents starting).
+      // -------------------------------------------------------------------
+
+      case 'wave.started': {
+        const num = (d.wave_number as number) ?? 0;
+        const total = (d.wave_total as number) ?? 0;
+        const count = (d.agent_count as number) ?? 0;
+        events.push({
+          type: 'system_message',
+          text: `[Wave ${num + 1}/${total}] starting with ${count} agent${count === 1 ? '' : 's'}...`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'wave.completed': {
+        const num = (d.wave_number as number) ?? 0;
+        const total = (d.wave_total as number) ?? 0;
+        const succeeded = (d.succeeded as number) ?? 0;
+        const failed = (d.failed as number) ?? 0;
+        const elapsed = (d.elapsed_s as number) ?? 0;
+        const failStr = failed > 0 ? `, ${failed} failed` : '';
+        events.push({
+          type: 'system_message',
+          text: `[Wave ${num + 1}/${total}] completed in ${elapsed.toFixed(1)}s (${succeeded} succeeded${failStr})`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      // -------------------------------------------------------------------
+      // Cascade tier heartbeat - emitted every 5s while a tier call is
+      // in flight so the operator sees continuous progress instead of
+      // silent windows during 20-60s LLM calls.
+      // -------------------------------------------------------------------
+
+      case 'cascade.tier_heartbeat': {
+        const name = (d.name as string) || `tier-${d.tier}`;
+        const elapsed = (d.elapsed_s as number) ?? 0;
+        events.push({
+          type: 'system_message',
+          text: `[Cascade] ${name} still working... ${elapsed.toFixed(0)}s elapsed`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
 
       // -------------------------------------------------------------------
       // Plan visibility - emit per-subtask cards so the user sees the
