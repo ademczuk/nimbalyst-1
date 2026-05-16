@@ -130,19 +130,55 @@ export class KimiClawRawParser implements IRawMessageParser {
         const output = typeof d.output === 'string' ? d.output : JSON.stringify(d.output);
         const synthetic = d.synthetic_output_used === true;
         const tier = typeof d.tier === 'number' ? d.tier : undefined;
-        // Prefix synthetic-tier-5 fallbacks visibly so the user knows
-        // this response did NOT come from a real LLM. The cascade emits
-        // this synthetic content when all upstream tiers fail; the user
-        // shouldn't trust it as a genuine model answer. Also surface
-        // tier 2-4 in a short prefix so power users can see which
-        // cascade tier produced each agent's output.
-        let prefix = '';
+        const agentName = (d.name as string) || (d.agent_id as string)?.slice(0, 8) || 'agent';
+        const domain = (d.domain as string) || 'general';
+
+        // Per-agent header rendered as a status system_message so the
+        // transcript visually divides between agents. The renderer
+        // styles systemType:'status' as a chip / divider, giving each
+        // agent its own clearly-bounded section without needing a full
+        // collapsible-card component. Domain provides the persona hint
+        // (coding / research / writing / analysis / design); an icon
+        // glyph encodes the persona visually without depending on
+        // theme tokens.
+        const DOMAIN_GLYPHS: Record<string, string> = {
+          coding: '⚙',
+          research: '🔍',
+          writing: '✎',
+          analysis: '◇',
+          design: '◈',
+        };
+        const glyph = DOMAIN_GLYPHS[domain] || '●';
+
+        // Tier badge: synthetic stays loud because it signals a real
+        // failure mode (no LLM behind the output). Tiers 2-4 are
+        // labeled compactly so power users can see fallover behaviour
+        // without overwhelming the visual rhythm.
+        let tierLabel = '';
         if (synthetic) {
-          prefix = '[SYNTH tier-5 fallback - no real LLM]\n\n';
+          tierLabel = ' · ⚠ SYNTH-tier-5 (no LLM)';
         } else if (tier !== undefined && tier > 1) {
           const tierName = { 2: 'codex', 3: 'claude-cli', 4: 'qwq' }[tier] || `tier-${tier}`;
-          prefix = `[via ${tierName}]\n\n`;
+          tierLabel = ` · via ${tierName}`;
+        } else if (tier === 1) {
+          tierLabel = ' · kimi';
         }
+
+        events.push({
+          type: 'system_message',
+          text: `${glyph} ${agentName} · ${domain}${tierLabel}`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+
+        // For SYNTHETIC outputs, keep the inline tag in the body too —
+        // the divider could scroll off-screen above a long output, and
+        // users absolutely should not mistake synthetic content for
+        // a real LLM answer.
+        const prefix = synthetic
+          ? '[SYNTH tier-5 fallback - no real LLM]\n\n'
+          : '';
+
         events.push({
           type: 'assistant_message',
           text: prefix + output,
