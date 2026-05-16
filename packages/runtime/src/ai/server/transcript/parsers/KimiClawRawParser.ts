@@ -199,11 +199,63 @@ export class KimiClawRawParser implements IRawMessageParser {
       case 'wave.started':
       case 'wave.completed':
       case 'decompose.started':
-      case 'decompose.completed':
-        // Silently ignore — bridge doesn't emit these
+        // Silently ignore - bridge doesn't emit these
         break;
 
-      // Unknown event types — no-op (extensibility hook for future KCS versions)
+      // -------------------------------------------------------------------
+      // Plan visibility - emit per-subtask cards so the user sees the
+      // decomposition before agents start running. KCS-side bridge emits
+      // task.created per subtask between decompose and spawn.
+      // -------------------------------------------------------------------
+
+      case 'decompose.completed': {
+        const subCount = (d.subtask_count as number) ?? 0;
+        const estSteps = (d.estimated_steps as number) ?? 0;
+        if (subCount > 0) {
+          events.push({
+            type: 'system_message',
+            text: `[Plan] Decomposed into ${subCount} subtask${subCount === 1 ? '' : 's'} (~${estSteps} steps)`,
+            systemType: 'status',
+            createdAt: new Date(),
+          });
+        }
+        break;
+      }
+
+      case 'task.created': {
+        // One subtask in the plan. Surface as a structured system_message
+        // so the transcript shows the plan unfolding. When nimbalyst's
+        // session-to-kanban linker lands, this same event can be promoted
+        // to a real task card without touching this parser.
+        const taskId = (d.task_id as string) || '?';
+        const description = (d.description as string) || '(no description)';
+        const domain = (d.domain as string) || 'analysis';
+        const estSteps = (d.estimated_steps as number) ?? 0;
+        const deps = Array.isArray(d.dependencies) ? (d.dependencies as string[]) : [];
+        const depStr = deps.length > 0 ? ` after ${deps.join(', ')}` : '';
+        events.push({
+          type: 'system_message',
+          text: `[Task ${taskId}] ${domain}: ${description} (~${estSteps} steps${depStr})`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'spawn.completed': {
+        const count = (d.agent_count as number) ?? 0;
+        if (count > 0) {
+          events.push({
+            type: 'system_message',
+            text: `[Spawn] ${count} agent${count === 1 ? '' : 's'} ready, executing...`,
+            systemType: 'status',
+            createdAt: new Date(),
+          });
+        }
+        break;
+      }
+
+      // Unknown event types - no-op (extensibility hook for future KCS versions)
       default:
         break;
     }
