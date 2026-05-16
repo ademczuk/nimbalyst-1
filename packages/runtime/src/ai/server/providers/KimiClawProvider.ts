@@ -255,9 +255,26 @@ export class KimiClawProvider extends BaseAgentProvider {
         if (sessionId && event.type === 'raw_event') {
           const rawSseEvent = (event.metadata as { rawEvent?: unknown } | undefined)?.rawEvent;
           if (rawSseEvent !== undefined) {
-            const { content } = safeJSONSerialize(rawSseEvent);
             const sseEventType = typeof (rawSseEvent as { type?: unknown }).type === 'string'
               ? (rawSseEvent as { type: string }).type : 'unknown';
+
+            // Verbose-logging gate. When the toggle is off (default), skip
+            // persisting the every-5s heartbeat ticks and phase-change chatter
+            // so the transcript stays readable. Structural events (waves,
+            // tier attempts/successes/failures, agent start/complete,
+            // deliverable, errors) are always persisted.
+            const verbose = ((this.config as any)?.verboseLogging as boolean) === true;
+            const VERBOSE_ONLY_EVENTS = new Set([
+              'cascade.tier_heartbeat',
+              'agent.phase_changed',
+              'agent.activity_changed',
+              'budget.update',
+            ]);
+            if (!verbose && VERBOSE_ONLY_EVENTS.has(sseEventType)) {
+              continue;
+            }
+
+            const { content } = safeJSONSerialize(rawSseEvent);
             await this.logAgentMessageBestEffort(sessionId, 'output', content, {
               metadata: { eventType: sseEventType, kimiclawProvider: true },
               hidden: true,
