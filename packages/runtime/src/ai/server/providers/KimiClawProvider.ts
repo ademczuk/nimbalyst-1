@@ -206,6 +206,11 @@ export class KimiClawProvider extends BaseAgentProvider {
             max_agents: (this.config as any)?.maxAgents ?? 4,
             max_steps: (this.config as any)?.maxSteps ?? 12,
             max_parallel: (this.config as any)?.maxParallel,
+            // Per-swarm hard wall-clock budget. KCS watchdog cancels the
+            // swarm at this elapsed time with a clean failure event.
+            // Default 300s matches KCS server-side default; bump in the
+            // settings panel for ambitious 4-6 agent prompts.
+            timeout_s: (this.config as any)?.timeoutS ?? 300,
           },
           mcpServers,
         } as Record<string, unknown>,

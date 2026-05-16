@@ -29,6 +29,11 @@ interface KimiClawConfig {
   maxAgents: number;
   maxSteps: number;
   maxParallel: number | null;
+  // Per-swarm hard wall-clock budget in seconds. KCS's watchdog cancels
+  // the swarm at this elapsed time and surfaces a clean failure event.
+  // Default 300s. Bump for ambitious prompts (4-6 agents + slow cascade
+  // tiers can need 600-900s realistically).
+  timeoutS: number;
   verboseLogging: boolean;
 }
 
@@ -44,6 +49,7 @@ function parseKimiClawConfig(config: ProviderConfig): KimiClawConfig {
     maxAgents: (c.maxAgents as number) || 4,
     maxSteps: (c.maxSteps as number) || 12,
     maxParallel: (c.maxParallel as number | null) ?? null,
+    timeoutS: (c.timeoutS as number) || 300,
     verboseLogging: (c.verboseLogging as boolean) || false,
   };
 }
@@ -264,6 +270,18 @@ export function KimiClawPanel({
                   onChange={(e) => handleConfigUpdate({ maxParallel: e.target.value ? parseInt(e.target.value, 10) : null })}
                   className="py-2 px-3 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text)] text-sm focus:border-[var(--nim-primary)] outline-none" />
               </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-[var(--nim-text)]">
+                Timeout (seconds)
+              </label>
+              <input type="number" min={10} max={3600} value={kc.timeoutS}
+                onChange={(e) => handleConfigUpdate({ timeoutS: parseInt(e.target.value, 10) })}
+                className="py-2 px-3 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text)] text-sm focus:border-[var(--nim-primary)] outline-none" />
+              <p className="text-xs text-[var(--nim-text-secondary)]">
+                Per-swarm hard wall-clock budget. KCS cancels the swarm at this elapsed time with a clean error.
+                Default 300s. Bump to 600-900 for ambitious 4-6 agent prompts when cascade is slow.
+              </p>
             </div>
           </div>
 
