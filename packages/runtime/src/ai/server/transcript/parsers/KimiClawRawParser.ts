@@ -270,6 +270,51 @@ export class KimiClawRawParser implements IRawMessageParser {
         break;
       }
 
+      // -------------------------------------------------------------------
+      // Cascade-tier progress events - emitted by KCS cascade.py per
+      // tier attempt so the operator sees live progress during the long
+      // decompose call. Replaces the silent "Thinking..." pattern with
+      // visible "trying codex... codex timeout, trying claude_cli...
+      // claude_cli succeeded in 23s" feedback.
+      // -------------------------------------------------------------------
+
+      case 'cascade.tier_attempt': {
+        const name = (d.name as string) || `tier-${d.tier}`;
+        events.push({
+          type: 'system_message',
+          text: `[Cascade] trying ${name}...`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'cascade.tier_succeeded': {
+        const name = (d.name as string) || `tier-${d.tier}`;
+        const elapsed = (d.elapsed_s as number) ?? 0;
+        const len = (d.content_len as number) ?? 0;
+        events.push({
+          type: 'system_message',
+          text: `[Cascade] ${name} succeeded in ${elapsed.toFixed(1)}s (${len} chars)`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'cascade.tier_failed': {
+        const name = (d.name as string) || `tier-${d.tier}`;
+        const elapsed = (d.elapsed_s as number) ?? 0;
+        const reason = (d.reason as string) || 'unknown';
+        events.push({
+          type: 'system_message',
+          text: `[Cascade] ${name} failed after ${elapsed.toFixed(1)}s (${reason}), trying next tier...`,
+          systemType: 'status',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
       // Unknown event types - no-op (extensibility hook for future KCS versions)
       default:
         break;
