@@ -193,7 +193,7 @@ export async function processDescriptor(
 
 export function selectRawParser(
   provider: string,
-): 'codex' | 'codex-acp' | 'copilot' | 'claude-code' | 'opencode' {
+): 'codex' | 'codex-acp' | 'copilot' | 'claude-code' | 'opencode' | 'kimiclaw' {
   if (provider === 'copilot-cli') {
     return 'copilot';
   }
@@ -205,6 +205,9 @@ export function selectRawParser(
   }
   if (provider === 'opencode') {
     return 'opencode';
+  }
+  if (provider === 'kimiclaw') {
+    return 'kimiclaw';
   }
   return 'claude-code';
 }

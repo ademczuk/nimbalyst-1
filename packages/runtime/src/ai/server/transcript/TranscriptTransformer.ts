@@ -22,6 +22,7 @@ import { CodexRawParser } from './parsers/CodexRawParser';
 import { CodexACPRawParser } from './parsers/CodexACPRawParser';
 import { CopilotRawParser } from './parsers/CopilotRawParser';
 import { OpenCodeRawParser } from './parsers/OpenCodeRawParser';
+import { KimiClawRawParser } from './parsers/KimiClawRawParser';
 import type {
   IRawMessageParser,
   ParseContext,
@@ -395,6 +396,9 @@ export class TranscriptTransformer {
     }
     if (provider === 'opencode') {
       return new OpenCodeRawParser();
+    }
+    if (provider === 'kimiclaw') {
+      return new KimiClawRawParser();
     }
     return new ClaudeCodeRawParser();
   }
