@@ -531,6 +531,144 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       break;
     }
 
+    // ── master-vocabulary additions (2026-05-17) ──────────────────────────
+    // The protocol parser previously only handled the main-branch FastAPI
+    // event vocabulary. Master KCS emits richer events under different names;
+    // these handlers mirror the most impactful ones into the live stream so
+    // the user sees activity as it happens (the persisted-pass
+    // KimiClawRawParser handles the same events plus all the rest).
+
+    // state.changed — surface only the synthesizing transition, the others
+    // are inferable from adjacent events and would add noise.
+    case 'state.changed': {
+      const state = d.state as string | undefined;
+      if (state === 'synthesizing') {
+        events.push({
+          type: 'text',
+          content: 'Synthesizing final answer...',
+          metadata: { kind: 'orchestrator_status' },
+        });
+      }
+      break;
+    }
+
+    case 'decompose.started': {
+      const score = (d.complexity_score as number) ?? 0;
+      const recAgents = (d.recommended_agents as number) ?? 0;
+      events.push({
+        type: 'text',
+        content: `Decomposing (complexity ${score.toFixed(2)}, ~${recAgents} agents)`,
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+    }
+
+    case 'decompose.completed': {
+      const agentCount = (d.agent_count as number) ?? (d.subtask_count as number) ?? 0;
+      const domains = Array.isArray(d.domains) ? (d.domains as string[]) : null;
+      if (agentCount > 0) {
+        let text = `Decomposed into ${agentCount} agent${agentCount === 1 ? '' : 's'}`;
+        if (domains && domains.length > 0) text += ` (${domains.join(' / ')})`;
+        events.push({
+          type: 'text',
+          content: text,
+          metadata: { kind: 'orchestrator_status' },
+        });
+      }
+      break;
+    }
+
+    // brain.tier — closest thing master has to per-tier cascade visibility.
+    // Reason tells us which adapter served the call (kimi_ok, codex_ok, ...).
+    case 'brain.tier': {
+      const kind = (d.kind as string) || 'cascade';
+      const tier = d.tier as number | undefined;
+      const reason = (d.reason as string) || '';
+      const synthetic = d.synthetic_output_used === true;
+      let cascadeName = '';
+      if (reason.startsWith('kimi')) cascadeName = 'kimi';
+      else if (reason.startsWith('codex')) cascadeName = 'codex';
+      else if (reason.startsWith('claude')) cascadeName = 'claude-cli';
+      else if (reason.startsWith('qwq')) cascadeName = 'qwq';
+      let text = `[${kind}] `;
+      if (synthetic) text += `⚠ synthetic fallback (tier ${tier ?? '?'})`;
+      else if (cascadeName) text += `via ${cascadeName}`;
+      else text += `tier ${tier ?? '?'} (${reason || 'no reason'})`;
+      events.push({
+        type: 'text',
+        content: text,
+        metadata: { kind: 'cascade_tier' },
+      });
+      break;
+    }
+
+    case 'synthesize.completed': {
+      const tier = d.fallback_tier as number | undefined;
+      const synthetic = d.synthetic_output_used === true;
+      const sources = (d.sources as number) ?? 0;
+      let text = `Synthesized from ${sources} source${sources === 1 ? '' : 's'}`;
+      if (synthetic) text += ` — ⚠ synthetic fallback (tier ${tier})`;
+      events.push({
+        type: 'text',
+        content: text,
+        metadata: { kind: 'orchestrator_status' },
+      });
+      break;
+    }
+
+    // coordinate.completed carries the final synthesized output on master.
+    // Main only sends it as a sentinel (no useful payload).
+    case 'coordinate.completed': {
+      const finalOutput = d.final_output as string | undefined;
+      if (finalOutput && finalOutput.trim()) {
+        events.push({
+          type: 'text',
+          content: finalOutput,
+          metadata: { kind: 'deliverable', final: true },
+        });
+      }
+      break;
+    }
+
+    case 'agent.degraded': {
+      const agentShort = (d.agent_id as string)?.slice(0, 8) || 'agent';
+      const reason = (d.reason as string) || 'unknown';
+      events.push({
+        type: 'text',
+        content: `[Agent ${agentShort}] ⚠ degraded: ${reason}, falling back through cascade...`,
+        metadata: { kind: 'agent_status' },
+      });
+      break;
+    }
+
+    // persona.selected (master persona-mode) — per-agent persona assignment
+    case 'persona.selected': {
+      const agentShort = (d.agent_id as string)?.slice(0, 8) || 'agent';
+      const personaName = (d.persona_name as string) || (d.persona_id as string) || '?';
+      const role = (d.role as string) || '';
+      const avatar = (d.avatar as string) || '';
+      const roleStr = role ? ` (${role})` : '';
+      events.push({
+        type: 'text',
+        content: `${avatar} ${personaName}${roleStr} → ${agentShort}`,
+        metadata: { kind: 'persona_assignment' },
+      });
+      break;
+    }
+
+    case 'swarm.cancelled': {
+      const reason = (d.reason as string) || 'cancelled';
+      const already = d.already_terminal === true;
+      if (!already) {
+        events.push({
+          type: 'text',
+          content: `Swarm cancelled: ${reason}`,
+          metadata: { kind: 'cancel' },
+        });
+      }
+      break;
+    }
+
     default:
       break;
   }
