@@ -137,9 +137,10 @@ export class KimiClawRawParser implements IRawMessageParser {
     if (this.processedEventIds.has(String(eventId))) return events;
     // Cap the dedup set so a runaway batch can't OOM the process.
     if (this.processedEventIds.size >= PROCESSED_IDS_MAX) {
-      // Crude eviction: clear half the set. Within-batch duplicates would
-      // need to be 50k apart to slip through, which is well outside any
-      // realistic SSE replay scenario.
+      // Crude LRU eviction: keep the MORE RECENT half (Sets preserve
+      // insertion order). Duplicates within ~PROCESSED_IDS_MAX/2 entries
+      // of the eviction event can slip through; bump PROCESSED_IDS_MAX
+      // if your batches genuinely exceed that volume.
       const arr = Array.from(this.processedEventIds);
       this.processedEventIds = new Set(arr.slice(arr.length / 2));
     }
@@ -923,25 +924,29 @@ export class KimiClawRawParser implements IRawMessageParser {
       // =====================================================================
 
       case 'cascade.tier_attempt': {
-        // Rogue-detection: cascade.tier_attempt is a MAIN-vocabulary event.
-        // If we're seeing it, nimbalyst is talking to the host-side
-        // `python -m kimi_claw_swarm serve` (main branch) instead of the
-        // Docker container running master. Main's cascade has NO kimi
-        // tier-1 - it starts at codex. Operator needs to know so they
-        // can stop the rogue process. Fire once per parser batch.
+        // Branch-detection: cascade.tier_attempt is a MAIN-vocabulary
+        // event. If we're seeing it, nimbalyst is talking to a KCS
+        // deployment running the main-branch FastAPI bridge (typically
+        // `python -m kimi_claw_swarm serve`) rather than the master-branch
+        // Flask engine. Main's cascade starts at codex with NO kimi
+        // tier-1, which is fine if that's your intended deployment but
+        // surprising if you expected master's kimi-first cascade. Fires
+        // once per parser batch with an informational (not prescriptive)
+        // message so users with main as primary aren't told to kill
+        // their own server.
         if (!this.rogueWarningEmitted) {
           this.rogueWarningEmitted = true;
           events.push({
             type: 'system_message',
             text:
-              'WARNING: nimbalyst is connected to the MAIN-branch KCS '
-              + '(host-side `python -m kimi_claw_swarm serve`), not the '
-              + 'master Docker container. Main\'s cascade skips kimi '
-              + 'tier-1 and goes straight to codex. To restore kimi '
-              + 'cascade, kill the host process (Get-Process python '
-              + '| Where-Object CommandLine -match kimi_claw_swarm | '
-              + 'Stop-Process) and dispatch a new swarm.',
-            systemType: 'error',
+              'Note: this KCS deployment uses the main-branch cascade '
+              + '(codex first, no kimi tier-1). If you expected master\'s '
+              + 'kimi cascade, check whether a host-side `python -m '
+              + 'kimi_claw_swarm serve` is shadowing your master Docker '
+              + 'container on port 9643. Get-Process python | '
+              + 'Where-Object CommandLine -match kimi_claw_swarm '
+              + 'lists candidates.',
+            systemType: 'status',
             createdAt: new Date(),
           });
         }

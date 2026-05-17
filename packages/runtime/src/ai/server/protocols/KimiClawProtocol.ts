@@ -346,12 +346,19 @@ function safeObj(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
-// Module-level rogue-detection latch. Fires a one-time warning ProtocolEvent
-// the first time cascade.tier_attempt is seen in a process lifetime (it's a
-// MAIN-vocabulary event - seeing it means nimbalyst is talking to the
-// host-side `python -m kimi_claw_swarm serve` instead of the Docker
-// container, and main's cascade skips kimi tier-1).
-let rogueWarningEmittedProtocol = false;
+// NOTE on rogue-detection: a previous version of this file had a
+// module-level latch that fired a one-time warning when cascade.tier_attempt
+// was seen. That was wrong on two axes:
+//   1. Module-level state never resets, so repeat occurrences (user kills
+//      the rogue host process then accidentally restarts it later) became
+//      silent — defeating the whole feature.
+//   2. The warning was prescriptive ("kill the rogue process") which is
+//      false-positive advice for users whose ONLY KCS deployment is the
+//      main-branch host process (no master container to fall back to).
+// The per-batch warning emitted by KimiClawRawParser (which renders in the
+// persisted transcript) covers this surface correctly: it re-fires every
+// time a new batch sees a main-vocabulary event, and the message is
+// informational rather than prescriptive.
 
 function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
   const events: ProtocolEvent[] = [];
@@ -360,21 +367,6 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
   // payload that's null / string / array falls through to the next
   // candidate instead of silently null-deref'ing later.
   const d = safeObj(raw.data?.payload) || safeObj(raw.data) || {};
-
-  // Rogue-detection latch. Fires BEFORE the switch so we always emit the
-  // warning regardless of which case handles cascade.tier_attempt.
-  if (raw.type === 'cascade.tier_attempt' && !rogueWarningEmittedProtocol) {
-    rogueWarningEmittedProtocol = true;
-    events.push({
-      type: 'text',
-      content:
-        'WARNING: connected to MAIN-branch KCS (host-side `python -m '
-        + 'kimi_claw_swarm serve`), not the master Docker container. '
-        + 'Main\'s cascade skips kimi tier-1 and goes straight to codex. '
-        + 'Kill the rogue process to restore kimi cascade.',
-      metadata: { kind: 'rogue_warning' },
-    });
-  }
 
   switch (raw.type) {
     case 'swarm.created': {
@@ -648,19 +640,15 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       break;
     }
 
-    // coordinate.completed carries the final synthesized output on master.
-    // Main only sends it as a sentinel (no useful payload).
-    case 'coordinate.completed': {
-      const finalOutput = d.final_output as string | undefined;
-      if (finalOutput && finalOutput.trim()) {
-        events.push({
-          type: 'text',
-          content: finalOutput,
-          metadata: { kind: 'deliverable', final: true },
-        });
-      }
+    // coordinate.completed is unreachable here: the outer loop in
+    // KimiClawProtocol.sendMessage breaks on this event BEFORE calling
+    // parseSwarmEvent, to avoid duplicating the deliverable that
+    // orchestrator.deliverable already emitted mid-stream (master emits
+    // both events carrying the same final text). The post-stream snapshot
+    // fallback picks up the deliverable when orchestrator.deliverable
+    // didn't fire. Keeping the case here for documentation; it's a no-op.
+    case 'coordinate.completed':
       break;
-    }
 
     case 'agent.degraded': {
       const agentShort = (d.agent_id as string)?.slice(0, 8) || 'agent';
@@ -816,11 +804,20 @@ export class KimiClawProtocol implements AgentProtocol {
           break;
         }
 
-        // Slice 3: SSE event -> canonical ProtocolEvent mapping.
-        // Run parseSwarmEvent BEFORE the terminal-event break so master's
-        // coordinate.completed.final_output gets a chance to emit as a
-        // deliverable (the previous order broke before parsing, making the
-        // coordinate.completed handler in parseSwarmEvent dead code).
+        // Terminal events: break BEFORE parseSwarmEvent. Reason: master
+        // emits BOTH orchestrator.deliverable (mid-stream, content field)
+        // AND coordinate.completed (terminal, final_output field) carrying
+        // the same deliverable text. If we let parseSwarmEvent run on
+        // coordinate.completed, it would emit the deliverable a second
+        // time, duplicating the user-visible answer. The post-stream
+        // snapshot fallback below handles the case where orchestrator.
+        // deliverable was NOT emitted (snap.deliverable + snap.result
+        // both populated on master swarms).
+        if (raw.type === 'coordinate.completed' || raw.type === 'coordinate.error') {
+          break;
+        }
+
+        // Slice 3: SSE event -> canonical ProtocolEvent mapping
         const evs = parseSwarmEvent(raw);
         for (const ev of evs) {
           if (ev.type === 'text' && ev.metadata?.kind === 'deliverable') {
@@ -830,10 +827,6 @@ export class KimiClawProtocol implements AgentProtocol {
         }
         // Always emit raw_event for transcript / downstream debugging
         yield { type: 'raw_event', metadata: { rawEvent: raw } };
-
-        if (raw.type === 'coordinate.completed' || raw.type === 'coordinate.error') {
-          break;
-        }
       }
 
       console.log(`[KIMICLAW PROTOCOL] SSE stream ended, ${eventCount} events received`);
