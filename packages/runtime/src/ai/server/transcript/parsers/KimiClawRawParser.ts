@@ -149,8 +149,15 @@ export class KimiClawRawParser implements IRawMessageParser {
     // The raw content can be EITHER:
     //   master envelope:  {type, swarm_id, timestamp, payload: {...}, seq}
     //   main envelope:    {type, data: {...}}
-    // We accept both. The "d" alias below is the merged payload — fields are
-    // looked up there regardless of which envelope produced them.
+    //
+    // KimiClawProtocol.streamEvents wraps every SSE frame as `{type, data}`
+    // before yielding; KimiClawProvider then persists THAT wrapper as the
+    // stored msg.content. So when the source is master, the persisted shape
+    // is `{type, data: {type, swarm_id, timestamp, payload: {...}, seq}}`,
+    // and the real fields live two levels deep at raw.data.payload, not at
+    // raw.payload (which is undefined) or raw.data (which is the inner
+    // master envelope object). Try the data-wrapped master path first, then
+    // fall back to flat master, then main, then root.
     let raw: { type: string; payload?: Record<string, unknown>; data?: Record<string, unknown> } | null = null;
     try {
       const parsed = JSON.parse(msg.content);
@@ -162,14 +169,16 @@ export class KimiClawRawParser implements IRawMessageParser {
     }
     if (!raw) return events;
 
-    // Prefer master's `payload`, fall back to main's `data`, fall back to root
-    // (some older test fixtures put fields at the root next to `type`).
-    // Use safeObj so a producer that accidentally sends `payload: null` or
-    // `data: "string"` falls through to the next candidate instead of
-    // silently null-deref'ing later.
+    // Prefer the data-wrapped master payload (raw.data.payload, which is
+    // what the provider actually persists), then bare master payload (in
+    // case some future code path stores unwrapped frames), then main's
+    // `data`, then root. safeObj guards against payload: null / data:
+    // "string" / etc.
+    const innerData = safeObj(raw.data);
     const d: Record<string, unknown> =
+      safeObj(innerData?.payload) ||
       safeObj(raw.payload) ||
-      safeObj(raw.data) ||
+      innerData ||
       safeObj(raw) ||
       {};
 
