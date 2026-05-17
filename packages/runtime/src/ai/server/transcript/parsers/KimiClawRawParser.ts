@@ -65,8 +65,26 @@ function reasonToCascadeName(reason: string | undefined): string {
   return reason;
 }
 
+interface PersonaInfo {
+  personaId: string;
+  personaName: string;
+  role: string;
+  avatar: string;
+  color: string;
+}
+
 export class KimiClawRawParser implements IRawMessageParser {
   private processedEventIds = new Set<string>();
+  // Per-agent persona memory within a batch. persona.selected fires before
+  // agent.started, so by the time we render the agent.completed divider we
+  // can pull the persona's avatar+color from this cache instead of falling
+  // back to generic domain glyphs.
+  private personaByAgentId = new Map<string, PersonaInfo>();
+  // Per-(kind) most recent brain.tier reason. Dedupes back-to-back identical
+  // brain.tier events (master sometimes emits two in a row for the same
+  // decision, especially in persona-mode where decompose and synthesize
+  // both call cascade with the same reason).
+  private lastBrainTierByKind = new Map<string, string>();
 
   async parseMessage(
     msg: RawMessage,
@@ -276,11 +294,23 @@ export class KimiClawRawParser implements IRawMessageParser {
       // MASTER: brain.tier fires after each cascade decision with the winner.
       // Reason tells us which adapter served the call. This is the closest
       // master comes to per-tier visibility — collapsed but informative.
+      // Dedup: same (kind, reason) back-to-back is suppressed (master
+      // sometimes emits identical brain.tier events when the same cascade
+      // path serves consecutive sub-calls). Synthetic fallback ALWAYS
+      // renders even if duplicate — it's a warning that should not be
+      // silenced.
       case 'brain.tier': {
         const kind = (d.kind as string) || 'unknown';
         const tier = typeof d.tier === 'number' ? (d.tier as number) : undefined;
         const reason = (d.reason as string) || '';
         const synthetic = d.synthetic_output_used === true;
+        const dedupKey = `${reason}|tier=${tier}|synth=${synthetic}`;
+        const lastForKind = this.lastBrainTierByKind.get(kind);
+        if (!synthetic && lastForKind === dedupKey) {
+          // Same reason as previous tier event for this kind — suppress.
+          break;
+        }
+        this.lastBrainTierByKind.set(kind, dedupKey);
         const cascadeName = reasonToCascadeName(reason);
         let text = `[${kind}] `;
         if (synthetic) {
@@ -364,13 +394,26 @@ export class KimiClawRawParser implements IRawMessageParser {
       // agent.started. Carries persona_id, persona_name, role, tagline,
       // avatar (emoji), color. Render as a compact selection ticker line
       // so the operator sees the persona assignments before the agents
-      // start working.
+      // start working. ALSO cache the persona by agent_id so the
+      // per-agent divider on agent.completed can use the persona's avatar
+      // and role instead of generic domain glyphs.
       case 'persona.selected': {
-        const agentShort = (d.agent_id as string)?.slice(0, 8) || 'agent';
+        const agentId = (d.agent_id as string) || '';
+        const agentShort = agentId.slice(0, 8) || 'agent';
         const personaName = (d.persona_name as string) || (d.persona_id as string) || '?';
         const role = (d.role as string) || '';
         const avatar = (d.avatar as string) || '';
+        const color = (d.color as string) || '';
         const roleStr = role ? ` · ${role}` : '';
+        if (agentId) {
+          this.personaByAgentId.set(agentId, {
+            personaId: (d.persona_id as string) || '',
+            personaName,
+            role,
+            avatar,
+            color,
+          });
+        }
         events.push({
           type: 'system_message',
           text: `${avatar} ${personaName}${roleStr} → ${agentShort}`,
@@ -484,9 +527,21 @@ export class KimiClawRawParser implements IRawMessageParser {
         const synthetic = d.synthetic_output_used === true;
         const tier = typeof d.tier === 'number' ? (d.tier as number) : undefined;
         const degraded = d.degraded === true;
-        const agentName = (d.persona_name as string) || (d.name as string) || (d.agent_id as string)?.slice(0, 8) || 'agent';
-        const domain = (d.role as string) || (d.domain as string) || 'general';
-        const glyph = DOMAIN_GLYPHS[domain] || '●';
+        const agentId = (d.agent_id as string) || '';
+        // Persona-aware divider: prefer the cached persona info from the
+        // earlier persona.selected event for THIS agent_id. Falls back to
+        // event-local fields or generic domain glyphs if persona-mode is
+        // off or persona.selected was missed.
+        const cachedPersona = agentId ? this.personaByAgentId.get(agentId) : undefined;
+        const agentName = cachedPersona?.personaName
+          || (d.persona_name as string)
+          || (d.name as string)
+          || agentId.slice(0, 8)
+          || 'agent';
+        const role = cachedPersona?.role || (d.role as string) || (d.domain as string) || 'general';
+        // Use the persona's emoji avatar if we have one, else the domain glyph,
+        // else a neutral dot.
+        const glyph = cachedPersona?.avatar || DOMAIN_GLYPHS[role] || '●';
 
         // Tier/degradation badge.
         let tierLabel = '';
@@ -503,7 +558,7 @@ export class KimiClawRawParser implements IRawMessageParser {
         // Per-agent divider header.
         events.push({
           type: 'system_message',
-          text: `${glyph} ${agentName} · ${domain}${tierLabel}`,
+          text: `${glyph} ${agentName} · ${role}${tierLabel}`,
           systemType: 'status',
           createdAt: new Date(),
         });
@@ -560,10 +615,18 @@ export class KimiClawRawParser implements IRawMessageParser {
 
       case 'budget.exhausted': {
         const wave = (d.wave_reached as number);
+        const consumed = (d.consumed_at_cap as number);
+        const requested = (d.requested as number);
         const strict = d.strict_mode === true;
-        let text = 'Budget exhausted';
+        let text = '⚠ Budget exhausted';
         if (wave !== undefined) text += ` at wave ${wave + 1}`;
-        if (strict) text += ' (strict mode)';
+        if (strict && consumed !== undefined && requested !== undefined) {
+          text += ` (strict mode: consumed ${consumed}, requested ${requested})`;
+        } else if (strict) {
+          text += ' (strict mode)';
+        }
+        text += '. Partial output (if any) renders below; the swarm did not'
+          + ' complete its full plan.';
         events.push({
           type: 'system_message',
           text,
@@ -603,24 +666,40 @@ export class KimiClawRawParser implements IRawMessageParser {
       // =====================================================================
 
       // MASTER: orchestrator.intermediate_synthesis fires between waves to
-      // share the orchestrator's reasoning. text-bearing — render verbatim.
+      // share the orchestrator's reasoning about whether to spawn another
+      // wave. Text-bearing — render verbatim, but with a clearly distinct
+      // header so the operator doesn't confuse it with agent output.
+      // The body is fenced inside the same assistant_message with a
+      // distinctive marker prefix because the renderer treats consecutive
+      // assistant_messages as one block.
       case 'orchestrator.intermediate_synthesis': {
         const synthesis = (d.synthesis as string) || '';
         const waveIndex = (d.wave_index as number) ?? 0;
         const done = d.done === true;
+        const nextTask = (d.next_task as string) || '';
+        const stopReason = (d.stop_reason as string) || '';
         if (synthesis.trim()) {
-          const header = done
-            ? `Orchestrator after wave ${waveIndex + 1} (final):`
-            : `Orchestrator after wave ${waveIndex + 1}:`;
+          // Use a dedicated header line + the synthesis as assistant
+          // content. The header system_message tells the operator this
+          // is orchestrator reasoning, not an agent answer.
+          const headerSuffix = done
+            ? `decision: STOP${stopReason ? ` (${stopReason})` : ''}`
+            : `decision: CONTINUE${nextTask ? ` → ${nextTask.slice(0, 100)}` : ''}`;
           events.push({
             type: 'system_message',
-            text: header,
+            text: `🧠 Orchestrator review after wave ${waveIndex + 1} · ${headerSuffix}`,
             systemType: 'status',
             createdAt: new Date(),
           });
+          // Indent the synthesis body with a > markdown quote so the renderer
+          // visually distinguishes it from agent output regardless of theme.
+          const indented = synthesis
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n');
           events.push({
             type: 'assistant_message',
-            text: synthesis,
+            text: indented,
             createdAt: new Date(),
           });
         }
