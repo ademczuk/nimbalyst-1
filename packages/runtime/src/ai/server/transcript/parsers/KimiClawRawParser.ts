@@ -488,14 +488,22 @@ export class KimiClawRawParser implements IRawMessageParser {
       }
 
       // BOTH: agent.started. Master adds persona fields when persona_mode on.
+      // Backend (main-branch FastAPI, 2026-05-17) now emits `tier` on
+      // agent.started so we can show the cascade tier upfront rather than
+      // only at completion. Tier mapping: 1=kimi 2=codex 3=claude-cli 4=qwq
+      // 5=synth. Undefined tier (legacy events) omits the badge entirely.
       case 'agent.started': {
         const agentName = (d.name as string) || (d.agent_id as string)?.slice(0, 8) || 'agent';
         const personaName = (d.persona_name as string);
         const role = (d.role as string);
         const label = personaName ? `${personaName} (${role || agentName})` : agentName;
+        const tier = typeof d.tier === 'number' ? (d.tier as number) : undefined;
+        const tierLabel = tier !== undefined && TIER_NAME_MAIN[tier]
+          ? ` · ${TIER_NAME_MAIN[tier]}`
+          : '';
         events.push({
           type: 'system_message',
-          text: `[Agent ${label}] Starting...`,
+          text: `[Agent ${label}] Starting...${tierLabel}`,
           systemType: 'status',
           createdAt: new Date(),
         });
@@ -610,16 +618,30 @@ export class KimiClawRawParser implements IRawMessageParser {
         // else a neutral dot.
         const glyph = cachedPersona?.avatar || DOMAIN_GLYPHS[role] || '●';
 
-        // Tier/degradation badge.
+        // Tier badge. Backend (main-branch FastAPI, 2026-05-17) emits a
+        // `tier` field on agent.completed (1=kimi 2=codex 3=claude-cli
+        // 4=qwq 5=synth). Map directly via TIER_NAME_MAIN. Undefined/null
+        // tier (legacy events) omits the badge entirely.
+        //
+        // cascade_reason is only present when synthetic/fallback fired and
+        // carries a short reason code (e.g. "codex_unavailable",
+        // "kimi_transient"). Append parenthetically when present.
+        //
+        // Order of precedence: synthetic > degraded > plain tier badge.
+        // The synthetic/degraded branches preserve the prior visible
+        // warnings so the divider still screams when content didn't come
+        // from a real primary LLM.
+        const cascadeReason = (d.cascade_reason as string) || '';
+        const reasonSuffix = cascadeReason ? ` (${cascadeReason})` : '';
         let tierLabel = '';
         if (synthetic) {
-          tierLabel = ' · ⚠ SYNTH fallback (no real LLM)';
+          const synthName = (tier !== undefined && TIER_NAME_MAIN[tier]) || 'synth';
+          tierLabel = ` · ⚠ ${synthName} fallback${reasonSuffix}`;
         } else if (degraded) {
-          tierLabel = ' · ⚠ degraded (kimi transient -> cascade)';
-        } else if (tier !== undefined && tier > 1 && TIER_NAME_MAIN[tier]) {
-          tierLabel = ` · via ${TIER_NAME_MAIN[tier]}`;
-        } else if (tier === 1) {
-          tierLabel = ' · kimi';
+          const tierName = (tier !== undefined && TIER_NAME_MAIN[tier]) || 'cascade';
+          tierLabel = ` · ⚠ degraded via ${tierName}${reasonSuffix}`;
+        } else if (tier !== undefined && TIER_NAME_MAIN[tier]) {
+          tierLabel = ` · ${TIER_NAME_MAIN[tier]}${reasonSuffix}`;
         }
 
         // Per-agent divider header.

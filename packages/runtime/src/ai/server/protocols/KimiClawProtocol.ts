@@ -417,10 +417,17 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
 
     case 'agent.started': {
       const name1 = (d.name as string | undefined)?.replace(/^Agent\s+/i, '') || (d.agent_id as string)?.slice(0, 8);
+      // Tier mapping (1=kimi 2=codex 3=claude-cli 4=qwq 5=synth). Undefined
+      // omits the badge so legacy KCS deployments don't render an empty trailer.
+      const tier = typeof d.tier === 'number' ? (d.tier as number) : undefined;
+      const tierLabels: Record<number, string> = {
+        1: 'kimi', 2: 'codex', 3: 'claude-cli', 4: 'qwq', 5: 'synth',
+      };
+      const tierSuffix = tier !== undefined && tierLabels[tier] ? ` · ${tierLabels[tier]}` : '';
       events.push({
         type: 'text',
-        content: `[Agent ${name1}] Starting...`,
-        metadata: { kind: 'agent_status' },
+        content: `[Agent ${name1}] Starting...${tierSuffix}`,
+        metadata: { kind: 'agent_status', tier },
       });
       break;
     }
