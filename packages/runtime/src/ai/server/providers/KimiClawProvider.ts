@@ -227,14 +227,19 @@ export class KimiClawProvider extends BaseAgentProvider {
       };
 
       console.log(`[KIMICLAW] Creating session (resumed=${isResumedSession}) for ${sessionId}`);
-      // v4.11 (2026-05-17): log the user message BEFORE the async session
-      // create so the chat ordering is correct. Previously the userMessage
-      // call happened after ~100-200ms of async work (login + session
-      // create), during which SSE events could already arrive and get
-      // inserted into the transcript ahead of the question — producing
-      // the "question at bottom of chat" UX bug.
+      // v4.13 (2026-05-17): retain the AgentProtocolTranscriptAdapter
+      // construction (its processEvent() is consumed in the streaming
+      // loop below) but drop the .userMessage(...) call. The adapter
+      // is built with `null` bus so userMessage was a guaranteed no-op
+      // — placement-shuffling at 85db406b moved a call that wrote
+      // nothing. Actual user message persistence happens upstream via
+      // MessageStreamingHandler.ts:386 BEFORE provider.sendMessage()
+      // is invoked, so for fresh sessions ordering is correct. If
+      // "question at bottom" recurs on screen, the cause is elsewhere:
+      // likely KCS SSE event timestamps from the server side racing
+      // the user message sequence, or session-resume ordering. Needs
+      // a separate investigation before another speculative fix.
       const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
-      transcriptAdapter.userMessage(messageWithContext, documentContext?.mode === 'planning' ? 'planning' : 'agent', attachments as any);
 
       const session = isResumedSession
         ? await this.protocol.resumeSession(existingSwarmId || '', sessionOptions)
