@@ -641,7 +641,11 @@ export class KimiClawRawParser implements IRawMessageParser {
           const tierName = (tier !== undefined && TIER_NAME_MAIN[tier]) || 'cascade';
           tierLabel = ` · ⚠ degraded via ${tierName}${reasonSuffix}`;
         } else if (tier !== undefined && TIER_NAME_MAIN[tier]) {
-          tierLabel = ` · ${TIER_NAME_MAIN[tier]}${reasonSuffix}`;
+          // Plain success: render just the tier name. Reason on success is
+          // always "<tier>_ok" which is redundant noise on the divider.
+          // Reason only appears on synthetic/degraded branches above where
+          // it carries diagnostic value (e.g. why fallback fired).
+          tierLabel = ` · ${TIER_NAME_MAIN[tier]}`;
         }
 
         // Per-agent divider header.
