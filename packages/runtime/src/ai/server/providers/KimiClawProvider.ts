@@ -217,6 +217,15 @@ export class KimiClawProvider extends BaseAgentProvider {
       };
 
       console.log(`[KIMICLAW] Creating session (resumed=${isResumedSession}) for ${sessionId}`);
+      // v4.11 (2026-05-17): log the user message BEFORE the async session
+      // create so the chat ordering is correct. Previously the userMessage
+      // call happened after ~100-200ms of async work (login + session
+      // create), during which SSE events could already arrive and get
+      // inserted into the transcript ahead of the question — producing
+      // the "question at bottom of chat" UX bug.
+      const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
+      transcriptAdapter.userMessage(messageWithContext, documentContext?.mode === 'planning' ? 'planning' : 'agent', attachments as any);
+
       const session = isResumedSession
         ? await this.protocol.resumeSession(existingSwarmId || '', sessionOptions)
         : await this.protocol.createSession(sessionOptions);
@@ -224,9 +233,6 @@ export class KimiClawProvider extends BaseAgentProvider {
 
       // Note: we don't store session.id (random UUID) here.
       // The actual KCS swarmId is captured from the first protocol event below.
-
-      const transcriptAdapter = new AgentProtocolTranscriptAdapter(null, sessionId ?? '');
-      transcriptAdapter.userMessage(messageWithContext, documentContext?.mode === 'planning' ? 'planning' : 'agent', attachments as any);
 
       // Stream protocol events — update stored providerSessionId to swarmId when dispatch completes
       let swarmIdCaptured = false;
