@@ -189,11 +189,34 @@ export function createWindow(
         let height = 768;
 
         if (savedBounds) {
-            // Use saved bounds from session
-            x = savedBounds.x;
-            y = savedBounds.y;
-            width = savedBounds.width;
-            height = savedBounds.height;
+            // Use saved bounds from session, but only if at least one currently
+            // connected display overlaps the saved rectangle by a meaningful
+            // amount. Otherwise the window opens off-screen (e.g. monitor was
+            // disconnected since the bounds were saved) and shows only as a
+            // taskbar thumbnail — see saved-bounds-off-screen bug, 2026-05-17.
+            const MIN_VISIBLE_AREA = 200 * 200;
+            const overlapsVisibleDisplay = screen.getAllDisplays().some(d => {
+                const ix = Math.max(savedBounds.x, d.bounds.x);
+                const iy = Math.max(savedBounds.y, d.bounds.y);
+                const ax = Math.min(savedBounds.x + savedBounds.width, d.bounds.x + d.bounds.width);
+                const ay = Math.min(savedBounds.y + savedBounds.height, d.bounds.y + d.bounds.height);
+                const w = Math.max(0, ax - ix);
+                const h = Math.max(0, ay - iy);
+                return w * h >= MIN_VISIBLE_AREA;
+            });
+            if (overlapsVisibleDisplay) {
+                x = savedBounds.x;
+                y = savedBounds.y;
+                width = savedBounds.width;
+                height = savedBounds.height;
+            } else {
+                console.warn(`[WINDOW-MANAGER] Saved bounds off-screen, falling back to primary: ${JSON.stringify(savedBounds)}`);
+                const primary = screen.getPrimaryDisplay();
+                x = primary.bounds.x + 100;
+                y = primary.bounds.y + 100;
+                width = Math.min(savedBounds.width, primary.bounds.width - 200);
+                height = Math.min(savedBounds.height, primary.bounds.height - 200);
+            }
         } else {
             // Get the display containing the cursor
             const cursorPoint = screen.getCursorScreenPoint();
@@ -572,6 +595,17 @@ export function createWindow(
             } else {
                 window.show();
             }
+            // Auto-open DevTools in dev mode when NIMBALYST_DEVTOOLS=1 — surfaces
+            // renderer crashes that otherwise produce a silent blank window.
+            if (process.env.NODE_ENV !== 'production' && process.env.NIMBALYST_DEVTOOLS === '1') {
+                window.webContents.openDevTools({ mode: 'detach' });
+            }
+        });
+
+        // Capture did-fail-load: catches navigation failures that don't crash
+        // the renderer (404s on the vite URL, network errors, etc).
+        window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+            console.error(`[MAIN] did-fail-load ${errorCode} ${errorDescription} url=${validatedURL}`);
         });
 
         // Handle renderer process crashes
