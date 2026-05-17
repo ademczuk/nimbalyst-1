@@ -28,6 +28,14 @@ export interface KimiClawSwarmOptions {
   // the swarm at this elapsed time and emits a clean failure event.
   // Range 10-3600. Default 300 if omitted (matches KCS server default).
   timeout_s?: number;
+  // Quality Control (KCS v4.12+). All optional.
+  // - verifier_enabled: run verifier pass over each agent output
+  // - max_retries_per_agent: 0 or null = no retries (pre-v4.12 behavior)
+  // - retry_on: comma-separated trigger list:
+  //     exception, empty, synth_fallback, verifier_critical
+  verifier_enabled?: boolean;
+  max_retries_per_agent?: number | null;
+  retry_on?: string;
   mcp_servers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 }
 

@@ -211,6 +211,16 @@ export class KimiClawProvider extends BaseAgentProvider {
             // Default 300s matches KCS server-side default; bump in the
             // settings panel for ambitious 4-6 agent prompts.
             timeout_s: (this.config as any)?.timeoutS ?? 300,
+            // Quality Control (KCS v4.12+). Defaults preserve pre-v4.12
+            // behavior: verifier off, no retries.
+            verifier_enabled: (this.config as any)?.verifierEnabled ?? false,
+            // 0 in the UI means "send null" so pre-v4.12 KCS treats it as
+            // no retry budget. >0 sends the integer.
+            max_retries_per_agent:
+              ((this.config as any)?.maxRetriesPerAgent ?? 0) === 0
+                ? null
+                : (this.config as any)?.maxRetriesPerAgent,
+            retry_on: (this.config as any)?.retryOn ?? 'exception,empty',
           },
           mcpServers,
         } as Record<string, unknown>,

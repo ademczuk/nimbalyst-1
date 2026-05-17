@@ -35,7 +35,20 @@ interface KimiClawConfig {
   // tiers can need 600-900s realistically).
   timeoutS: number;
   verboseLogging: boolean;
+  // Quality Control (KCS v4.12+). All optional; safe defaults preserve
+  // pre-v4.12 behavior (verifier off, no retries).
+  verifierEnabled: boolean;
+  // 0 means "send null to KCS" which preserves pre-v4.12 backward-compat
+  // (no retry budget enforced). >0 sets the per-agent retry budget.
+  maxRetriesPerAgent: number;
+  // Comma-separated list of trigger types: exception, empty,
+  // synth_fallback, verifier_critical. Stored as string in settings JSON
+  // so it round-trips cleanly through Electron's settings serialization.
+  retryOn: string;
 }
+
+const RETRY_ON_OPTIONS = ['exception', 'empty', 'synth_fallback', 'verifier_critical'] as const;
+const DEFAULT_RETRY_ON = 'exception,empty';
 
 function parseKimiClawConfig(config: ProviderConfig): KimiClawConfig {
   const c = config as unknown as Record<string, unknown>;
@@ -51,7 +64,26 @@ function parseKimiClawConfig(config: ProviderConfig): KimiClawConfig {
     maxParallel: (c.maxParallel as number | null) ?? null,
     timeoutS: (c.timeoutS as number) || 300,
     verboseLogging: (c.verboseLogging as boolean) || false,
+    verifierEnabled: (c.verifierEnabled as boolean) ?? false,
+    maxRetriesPerAgent: (c.maxRetriesPerAgent as number) ?? 0,
+    retryOn: (c.retryOn as string) ?? DEFAULT_RETRY_ON,
   };
+}
+
+function parseRetryOn(s: string): Set<string> {
+  return new Set(
+    s.split(',')
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0)
+  );
+}
+
+function toggleRetryOn(s: string, flag: string): string {
+  const set = parseRetryOn(s);
+  if (set.has(flag)) set.delete(flag);
+  else set.add(flag);
+  // Preserve canonical order (matches RETRY_ON_OPTIONS)
+  return RETRY_ON_OPTIONS.filter((opt) => set.has(opt)).join(',');
 }
 
 export function KimiClawPanel({
@@ -281,6 +313,63 @@ export function KimiClawPanel({
               <p className="text-xs text-[var(--nim-text-secondary)]">
                 Per-swarm hard wall-clock budget. KCS cancels the swarm at this elapsed time with a clean error.
                 Default 300s. Bump to 600-900 for ambitious 4-6 agent prompts when cascade is slow.
+              </p>
+            </div>
+          </div>
+
+          {/* Quality Control (KCS v4.12+) */}
+          <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]">
+            <h4 className="text-base font-semibold mb-3 text-[var(--nim-text)]">Quality Control</h4>
+            <SettingsToggle
+              variant="inline"
+              name="Verifier enabled"
+              description="Run a verifier pass over each agent output. Catches synth fallbacks and empty/critical outputs; KCS may retry per the rules below."
+              checked={kc.verifierEnabled}
+              onChange={(checked) => handleConfigUpdate({ verifierEnabled: checked })}
+            />
+            <div className="flex gap-4 mt-4">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <label className="text-sm font-medium text-[var(--nim-text)]">Max retries per agent</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={kc.maxRetriesPerAgent}
+                  onChange={(e) => {
+                    const raw = parseInt(e.target.value, 10);
+                    const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(5, raw)) : 0;
+                    handleConfigUpdate({ maxRetriesPerAgent: clamped });
+                  }}
+                  className="py-2 px-3 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text)] text-sm focus:border-[var(--nim-primary)] outline-none"
+                />
+                <p className="text-xs text-[var(--nim-text-secondary)]">
+                  0 means no retries (pre-v4.12 behavior). 1-5 retries per agent on triggers below.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 mt-4">
+              <label className="text-sm font-medium text-[var(--nim-text)]">Retry triggers</label>
+              <div className="flex flex-wrap gap-2">
+                {RETRY_ON_OPTIONS.map((opt) => {
+                  const selected = parseRetryOn(kc.retryOn).has(opt);
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => handleConfigUpdate({ retryOn: toggleRetryOn(kc.retryOn, opt) })}
+                      className={`py-1 px-3 rounded-full text-xs font-medium border transition-all ${
+                        selected
+                          ? 'border-[var(--nim-primary)] bg-[var(--nim-primary)] text-white'
+                          : 'border-[var(--nim-border)] text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-[var(--nim-text-secondary)]">
+                Which failure types trigger a retry. Only applies when Max retries per agent &gt; 0.
               </p>
             </div>
           </div>
