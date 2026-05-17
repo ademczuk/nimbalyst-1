@@ -73,6 +73,27 @@ interface PersonaInfo {
   color: string;
 }
 
+// Helper: safely coerce a value to a plain object (Record<string, unknown>)
+// only when it actually IS one. Used to guard against payloads that arrived
+// as null / string / number / array — the cast `(x as Record<string,
+// unknown>)` would silently lie and downstream property access would either
+// crash (number.foo) or return undefined-with-no-error (string.foo). This
+// helper makes both cases return undefined explicitly so the caller can
+// pick a different fallback path.
+function safeObj(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+// Per-batch size caps. Bounded by typical swarm sizes (hundreds of agents
+// max). The 50k cap on processedEventIds protects against an unbounded
+// batch (e.g. replaying a multi-day swarm transcript in one pass) without
+// hurting normal-case memory.
+const PROCESSED_IDS_MAX = 50_000;
+const PERSONA_CACHE_MAX = 500;
+
 export class KimiClawRawParser implements IRawMessageParser {
   private processedEventIds = new Set<string>();
   // Per-agent persona memory within a batch. persona.selected fires before
@@ -85,6 +106,19 @@ export class KimiClawRawParser implements IRawMessageParser {
   // decision, especially in persona-mode where decompose and synthesize
   // both call cascade with the same reason).
   private lastBrainTierByKind = new Map<string, string>();
+  // Monotonic counter ensuring fallback event IDs are unique even when
+  // multiple events share the same millisecond + source. Without this, the
+  // de-dup Set silently drops same-ms events from KCS bursty SSE streams
+  // (cascade contention often emits agent.action twice in <1ms). See
+  // commit log for the failure mode.
+  private fallbackIdCounter = 0;
+  // Rogue-detection: set when an event with the main-branch envelope
+  // (cascade.tier_attempt) is seen, indicating nimbalyst is talking to
+  // the stale host-side `python -m kimi_claw_swarm serve` instead of the
+  // Docker container running master. Triggers a one-time warning so the
+  // operator can stop the rogue process. Per-batch state — re-fires once
+  // per session if needed.
+  private rogueWarningEmitted = false;
 
   async parseMessage(
     msg: RawMessage,
@@ -92,8 +126,23 @@ export class KimiClawRawParser implements IRawMessageParser {
   ): Promise<CanonicalEventDescriptor[]> {
     const events: CanonicalEventDescriptor[] = [];
 
-    const eventId = msg.id || `${msg.createdAt.getTime()}-${msg.source}`;
+    // Build a unique event id. Prefer the message's own id; if absent, fall
+    // back to a (ms, source, monotonic-counter) tuple. The counter is the
+    // load-bearing piece: KCS SSE bursts can emit multiple events in the
+    // same millisecond from the same source (cascade contention,
+    // wave-fanout, persona.selected stream). Without it, the second event
+    // gets dropped silently with no debug trace.
+    const eventId = msg.id
+      || `${msg.createdAt.getTime()}-${msg.source}-${this.fallbackIdCounter++}`;
     if (this.processedEventIds.has(String(eventId))) return events;
+    // Cap the dedup set so a runaway batch can't OOM the process.
+    if (this.processedEventIds.size >= PROCESSED_IDS_MAX) {
+      // Crude eviction: clear half the set. Within-batch duplicates would
+      // need to be 50k apart to slip through, which is well outside any
+      // realistic SSE replay scenario.
+      const arr = Array.from(this.processedEventIds);
+      this.processedEventIds = new Set(arr.slice(arr.length / 2));
+    }
     this.processedEventIds.add(String(eventId));
 
     // The raw content can be EITHER:
@@ -114,10 +163,13 @@ export class KimiClawRawParser implements IRawMessageParser {
 
     // Prefer master's `payload`, fall back to main's `data`, fall back to root
     // (some older test fixtures put fields at the root next to `type`).
+    // Use safeObj so a producer that accidentally sends `payload: null` or
+    // `data: "string"` falls through to the next candidate instead of
+    // silently null-deref'ing later.
     const d: Record<string, unknown> =
-      (raw.payload as Record<string, unknown>) ||
-      (raw.data as Record<string, unknown>) ||
-      (raw as unknown as Record<string, unknown>) ||
+      safeObj(raw.payload) ||
+      safeObj(raw.data) ||
+      safeObj(raw) ||
       {};
 
     switch (raw.type) {
@@ -132,12 +184,15 @@ export class KimiClawRawParser implements IRawMessageParser {
       case 'orchestrator.started': {
         const sid = (d.swarm_id as string) || '';
         const task = (d.task as string) || '';
-        const cfg = (d.config as Record<string, unknown> | undefined);
+        // safeObj guards against d.config being a number / string / null —
+        // the raw `as Record<string, unknown> | undefined` cast would silently
+        // lie and the cfg?.max_agents access would throw TypeError.
+        const cfg = safeObj(d.config);
         const maxAgents = cfg?.max_agents ?? d.max_agents;
         const maxSteps = cfg?.max_steps ?? d.max_steps;
         let text = `Swarm ${sid.slice(0, 16)} started`;
         if (maxAgents !== undefined && maxSteps !== undefined) {
-          text += ` — up to ${maxAgents} agent${maxAgents === 1 ? '' : 's'}, ${maxSteps} steps`;
+          text += ` - up to ${maxAgents} agent${maxAgents === 1 ? '' : 's'}, ${maxSteps} steps`;
         }
         if (task && task.length < 200) {
           text += `\nTask: ${task}`;
@@ -155,7 +210,7 @@ export class KimiClawRawParser implements IRawMessageParser {
       case 'swarm.configured':
         events.push({
           type: 'system_message',
-          text: `Swarm configured — max ${d.max_agents} agents, ${d.max_steps} steps${d.parallel ? ' (parallel)' : ''}`,
+          text: `Swarm configured - max ${d.max_agents} agents, ${d.max_steps} steps${d.parallel ? ' (parallel)' : ''}`,
           systemType: 'status',
           createdAt: new Date(),
         });
@@ -406,6 +461,14 @@ export class KimiClawRawParser implements IRawMessageParser {
         const color = (d.color as string) || '';
         const roleStr = role ? ` · ${role}` : '';
         if (agentId) {
+          // Bound the cache so a long-running session with lots of distinct
+          // agent IDs (e.g. multi-wave swarms with new agents per wave) can't
+          // grow unbounded. FIFO eviction is fine - older agents are unlikely
+          // to be referenced again once their completion has rendered.
+          if (this.personaByAgentId.size >= PERSONA_CACHE_MAX) {
+            const firstKey = this.personaByAgentId.keys().next().value;
+            if (firstKey !== undefined) this.personaByAgentId.delete(firstKey);
+          }
           this.personaByAgentId.set(agentId, {
             personaId: (d.persona_id as string) || '',
             personaName,
@@ -416,7 +479,7 @@ export class KimiClawRawParser implements IRawMessageParser {
         }
         events.push({
           type: 'system_message',
-          text: `${avatar} ${personaName}${roleStr} → ${agentShort}`,
+          text: `${avatar} ${personaName}${roleStr} -> ${agentShort}`,
           systemType: 'status',
           createdAt: new Date(),
         });
@@ -447,7 +510,10 @@ export class KimiClawRawParser implements IRawMessageParser {
         const agentId = (d.agent_id as string) || '';
         const kind = (d.kind as string) || '';
         const status = (d.status as string) || '';
-        const args = (d.args as Record<string, unknown>) || {};
+        // safeObj guards against d.args being null / string / array. Same
+        // bait as d.config above - the bare cast would lie and the .query
+        // access on a string would silently return character-at-key.
+        const args = safeObj(d.args) || {};
         const agentShort = agentId.slice(0, 8);
         if (status === 'in_progress' && kind === 'think') {
           // Suppress — the activity_changed=Running event covers this
@@ -548,7 +614,7 @@ export class KimiClawRawParser implements IRawMessageParser {
         if (synthetic) {
           tierLabel = ' · ⚠ SYNTH fallback (no real LLM)';
         } else if (degraded) {
-          tierLabel = ' · ⚠ degraded (kimi transient → cascade)';
+          tierLabel = ' · ⚠ degraded (kimi transient -> cascade)';
         } else if (tier !== undefined && tier > 1 && TIER_NAME_MAIN[tier]) {
           tierLabel = ` · via ${TIER_NAME_MAIN[tier]}`;
         } else if (tier === 1) {
@@ -585,7 +651,7 @@ export class KimiClawRawParser implements IRawMessageParser {
         const reason = (d.reason as string) || 'unknown';
         events.push({
           type: 'system_message',
-          text: `[Agent ${agentShort}] ⚠ degraded: ${reason} — falling back through cascade...`,
+          text: `[Agent ${agentShort}] ⚠ degraded: ${reason} - falling back through cascade...`,
           systemType: 'status',
           createdAt: new Date(),
         });
@@ -596,9 +662,13 @@ export class KimiClawRawParser implements IRawMessageParser {
       case 'agent.failed': {
         const agentShort = (d.agent_id as string)?.slice(0, 8) || 'agent';
         const agentName = (d.name as string) || agentShort;
+        // Guard against missing `error` field - older KCS variants used
+        // `reason` instead, and a totally empty payload would render
+        // "Agent X failed: undefined" which looks like a bug.
+        const errStr = (d.error as string) || (d.reason as string) || 'unknown error';
         events.push({
           type: 'system_message',
-          text: `Agent ${agentName} failed: ${d.error}`,
+          text: `Agent ${agentName} failed: ${errStr}`,
           systemType: 'error',
           createdAt: new Date(),
         });
@@ -648,7 +718,7 @@ export class KimiClawRawParser implements IRawMessageParser {
         const sources = (d.sources as number) ?? 0;
         let text = `Synthesized from ${sources} source${sources === 1 ? '' : 's'}`;
         if (synthetic) {
-          text += ` — ⚠ synthetic fallback (tier ${tier})`;
+          text += ` - ⚠ synthetic fallback (tier ${tier})`;
         } else if (tier && tier > 1) {
           text += ` via ${TIER_NAME_MAIN[tier] || `tier ${tier}`}`;
         }
@@ -684,7 +754,7 @@ export class KimiClawRawParser implements IRawMessageParser {
           // is orchestrator reasoning, not an agent answer.
           const headerSuffix = done
             ? `decision: STOP${stopReason ? ` (${stopReason})` : ''}`
-            : `decision: CONTINUE${nextTask ? ` → ${nextTask.slice(0, 100)}` : ''}`;
+            : `decision: CONTINUE${nextTask ? ` -> ${nextTask.slice(0, 100)}` : ''}`;
           events.push({
             type: 'system_message',
             text: `🧠 Orchestrator review after wave ${waveIndex + 1} · ${headerSuffix}`,
@@ -853,6 +923,28 @@ export class KimiClawRawParser implements IRawMessageParser {
       // =====================================================================
 
       case 'cascade.tier_attempt': {
+        // Rogue-detection: cascade.tier_attempt is a MAIN-vocabulary event.
+        // If we're seeing it, nimbalyst is talking to the host-side
+        // `python -m kimi_claw_swarm serve` (main branch) instead of the
+        // Docker container running master. Main's cascade has NO kimi
+        // tier-1 - it starts at codex. Operator needs to know so they
+        // can stop the rogue process. Fire once per parser batch.
+        if (!this.rogueWarningEmitted) {
+          this.rogueWarningEmitted = true;
+          events.push({
+            type: 'system_message',
+            text:
+              'WARNING: nimbalyst is connected to the MAIN-branch KCS '
+              + '(host-side `python -m kimi_claw_swarm serve`), not the '
+              + 'master Docker container. Main\'s cascade skips kimi '
+              + 'tier-1 and goes straight to codex. To restore kimi '
+              + 'cascade, kill the host process (Get-Process python '
+              + '| Where-Object CommandLine -match kimi_claw_swarm | '
+              + 'Stop-Process) and dispatch a new swarm.',
+            systemType: 'error',
+            createdAt: new Date(),
+          });
+        }
         const name = (d.name as string) || `tier-${d.tier}`;
         events.push({
           type: 'system_message',

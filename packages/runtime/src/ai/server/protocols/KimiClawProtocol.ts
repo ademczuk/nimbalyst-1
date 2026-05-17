@@ -338,11 +338,43 @@ function isNoiseText(text: string): boolean {
   return false;
 }
 
+// Helper: safe object coercion (same pattern as KimiClawRawParser.ts).
+function safeObj(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+// Module-level rogue-detection latch. Fires a one-time warning ProtocolEvent
+// the first time cascade.tier_attempt is seen in a process lifetime (it's a
+// MAIN-vocabulary event - seeing it means nimbalyst is talking to the
+// host-side `python -m kimi_claw_swarm serve` instead of the Docker
+// container, and main's cascade skips kimi tier-1).
+let rogueWarningEmittedProtocol = false;
+
 function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
   const events: ProtocolEvent[] = [];
   // KCS wraps event fields in a nested `payload` object, but some legacy
-  // endpoints may flatten them — normalise both shapes.
-  const d = (raw.data.payload as Record<string, unknown>) || raw.data;
+  // endpoints may flatten them - normalise both shapes via safeObj so a
+  // payload that's null / string / array falls through to the next
+  // candidate instead of silently null-deref'ing later.
+  const d = safeObj(raw.data?.payload) || safeObj(raw.data) || {};
+
+  // Rogue-detection latch. Fires BEFORE the switch so we always emit the
+  // warning regardless of which case handles cascade.tier_attempt.
+  if (raw.type === 'cascade.tier_attempt' && !rogueWarningEmittedProtocol) {
+    rogueWarningEmittedProtocol = true;
+    events.push({
+      type: 'text',
+      content:
+        'WARNING: connected to MAIN-branch KCS (host-side `python -m '
+        + 'kimi_claw_swarm serve`), not the master Docker container. '
+        + 'Main\'s cascade skips kimi tier-1 and goes straight to codex. '
+        + 'Kill the rogue process to restore kimi cascade.',
+      metadata: { kind: 'rogue_warning' },
+    });
+  }
 
   switch (raw.type) {
     case 'swarm.created': {
@@ -351,7 +383,7 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       const maxSteps = cfg?.max_steps ?? cfg?.maxSteps ?? '?';
       events.push({
         type: 'text',
-        content: `Swarm ${(d.swarm_id as string)?.slice(0, 12)} created — max ${maxAgents} agents, ${maxSteps} steps`,
+        content: `Swarm ${(d.swarm_id as string)?.slice(0, 12)} created - max ${maxAgents} agents, ${maxSteps} steps`,
         metadata: { kind: 'orchestrator_status' },
       });
       break;
@@ -372,7 +404,7 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       const maxSteps = d.max_steps ?? '?';
       events.push({
         type: 'text',
-        content: `Configured — max ${maxAgents} agents, ${maxSteps} steps`,
+        content: `Configured - max ${maxAgents} agents, ${maxSteps} steps`,
         metadata: { kind: 'orchestrator_status' },
       });
       break;
@@ -607,7 +639,7 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       const synthetic = d.synthetic_output_used === true;
       const sources = (d.sources as number) ?? 0;
       let text = `Synthesized from ${sources} source${sources === 1 ? '' : 's'}`;
-      if (synthetic) text += ` — ⚠ synthetic fallback (tier ${tier})`;
+      if (synthetic) text += ` - ⚠ synthetic fallback (tier ${tier})`;
       events.push({
         type: 'text',
         content: text,
@@ -650,7 +682,7 @@ function parseSwarmEvent(raw: RawKimiClawEvent): ProtocolEvent[] {
       const roleStr = role ? ` (${role})` : '';
       events.push({
         type: 'text',
-        content: `${avatar} ${personaName}${roleStr} → ${agentShort}`,
+        content: `${avatar} ${personaName}${roleStr} -> ${agentShort}`,
         metadata: { kind: 'persona_assignment' },
       });
       break;
@@ -784,11 +816,11 @@ export class KimiClawProtocol implements AgentProtocol {
           break;
         }
 
-        if (raw.type === 'coordinate.completed' || raw.type === 'coordinate.error') {
-          break;
-        }
-
-        // Slice 3: SSE event -> canonical ProtocolEvent mapping
+        // Slice 3: SSE event -> canonical ProtocolEvent mapping.
+        // Run parseSwarmEvent BEFORE the terminal-event break so master's
+        // coordinate.completed.final_output gets a chance to emit as a
+        // deliverable (the previous order broke before parsing, making the
+        // coordinate.completed handler in parseSwarmEvent dead code).
         const evs = parseSwarmEvent(raw);
         for (const ev of evs) {
           if (ev.type === 'text' && ev.metadata?.kind === 'deliverable') {
@@ -798,6 +830,10 @@ export class KimiClawProtocol implements AgentProtocol {
         }
         // Always emit raw_event for transcript / downstream debugging
         yield { type: 'raw_event', metadata: { rawEvent: raw } };
+
+        if (raw.type === 'coordinate.completed' || raw.type === 'coordinate.error') {
+          break;
+        }
       }
 
       console.log(`[KIMICLAW PROTOCOL] SSE stream ended, ${eventCount} events received`);
