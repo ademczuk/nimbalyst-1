@@ -34,6 +34,7 @@ interface ElectronAPI {
   onFileNew: (callback: () => void) => () => void;
   onFileNewInWorkspace: (callback: () => void) => () => void;
   onAgentNewSession: (callback: () => void) => () => void;
+  onSessionsInvalidate: (callback: (data: { reason?: string; sessionId?: string; workspaceId?: string }) => void) => () => void;
   onFileOpen: (callback: () => void) => () => void;
   onFileSave: (callback: () => void) => () => void;
   onFileSaveAs: (callback: () => void) => () => void;

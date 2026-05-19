@@ -489,6 +489,26 @@ export default function App() {
   const setActiveMode = useSetAtom(setWindowModeAtom);
   const toggleAgentCollapsed = useSetAtom(toggleSessionHistoryCollapsedAtom);
   const updateDeveloperSettings = useSetAtom(setDeveloperFeatureSettingsAtom);
+
+  // 2026-05-18: External session-creation listener. The control plane
+  // (packages/electron/src/main/mcp/controlRoutes.ts) fires the
+  // `sessions:invalidate` IPC after AISessionsRepository.create runs
+  // outside the renderer (e.g. via nimbalyst-mcp sidecar or curl). Run
+  // refreshSessionListAtom to pull the new session into the sidebar
+  // without losing transcript scroll / composer text / expanded panes.
+  // The reason / sessionId / workspaceId payload is informational only;
+  // we always do a full refresh because partial-update logic would
+  // duplicate sessionRegistryAtom write semantics for marginal benefit.
+  const refreshSessionListFromInvalidate = useSetAtom(refreshSessionListAtom);
+  useEffect(() => {
+    const off = window.electronAPI.onSessionsInvalidate((data) => {
+      console.log('[App] sessions:invalidate received', data);
+      refreshSessionListFromInvalidate();
+    });
+    return () => {
+      try { off?.(); } catch { /* listener already gone */ }
+    };
+  }, [refreshSessionListFromInvalidate]);
   // Keep a ref for use in callbacks that might have stale closures
   const activeModeStateRef = useRef<ContentMode>(activeMode);
   useEffect(() => {

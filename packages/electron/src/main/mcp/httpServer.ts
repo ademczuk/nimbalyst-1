@@ -15,6 +15,7 @@ import { getMostRecentlyFocusedWorkspaceWindow, windowStates, windowFocusOrder }
 import { windows } from "../window/windowState";
 import { workspaceToWindowMap } from "./mcpWorkspaceResolver";
 import { requireMcpAuth } from "./mcpAuth";
+import { handleControlRequest } from "./controlRoutes";
 
 // Extracted modules
 import {
@@ -899,6 +900,26 @@ async function tryCreateServer(port: number): Promise<any> {
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, path: finalPath }));
+        } else if (pathname && pathname.startsWith("/control/v1")) {
+          // 2026-05-18: control plane for external automation. The
+          // handler enforces Host validation + bearer token auth +
+          // returns true once a response has been sent. If it returns
+          // false the prefix didn't match (shouldn't happen here since
+          // we already checked startsWith); we fall through to the
+          // 404 below for safety.
+          try {
+            const handled = await handleControlRequest(req, res, pathname);
+            if (!handled) {
+              res.writeHead(404);
+              res.end("Not found");
+            }
+          } catch (err) {
+            console.error("[control] unhandled error:", err);
+            if (!res.headersSent) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "internal", detail: String(err) }));
+            }
+          }
         } else {
           res.writeHead(404);
           res.end("Not found");

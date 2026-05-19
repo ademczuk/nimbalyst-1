@@ -89,6 +89,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('agent-new-session', callback);
     return () => ipcRenderer.removeListener('agent-new-session', callback);
   },
+  // 2026-05-18: Fired by the control plane (controlRoutes.ts) when a
+  // session is created from outside the renderer (e.g. via the
+  // nimbalyst-mcp sidecar). Renderer responds by re-running
+  // refreshSessionListAtom so the new session appears in the sidebar
+  // without forcing a full webContents.reload (preserves transcript
+  // scroll position, composer text, expanded panes).
+  onSessionsInvalidate: (callback: (data: { reason?: string; sessionId?: string; workspaceId?: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sessions:invalidate', handler);
+    return () => ipcRenderer.removeListener('sessions:invalidate', handler);
+  },
   onFileOpen: (callback: () => void) => {
     ipcRenderer.on('file-open', callback);
     return () => ipcRenderer.removeListener('file-open', callback);

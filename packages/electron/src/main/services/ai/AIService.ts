@@ -143,6 +143,45 @@ export class AIService {
   // Owns the streaming send-message lifecycle (extracted from setupIpcHandlers).
   private streamingHandler: MessageStreamingHandler;
 
+  /**
+   * 2026-05-18: public entrypoint for controlRoutes.ts (external automation).
+   *
+   * Mirrors the ai:sendMessage IPC handler at line 1756 but accepts an
+   * explicit workspacePath instead of resolving it from the calling
+   * window's state — the control plane has no renderer window so the
+   * usual `windowStates.get(event.sender.id)` lookup fails. We fake an
+   * IpcMainInvokeEvent whose sender.send is a no-op (the streaming
+   * chunks are routed to the renderer for live transcript updates;
+   * external callers don't need them — the provider writes all
+   * authoritative state back to ai_agent_messages so polling
+   * AgentMessagesRepository.list gives the same answer).
+   *
+   * Returns when the provider's sendMessage call resolves, which
+   * means the final message has been persisted. Callers can either
+   * await this (synchronous-from-their-perspective) or fire-and-forget
+   * and poll the transcript route.
+   */
+  async dispatchExternal(
+    prompt: string,
+    sessionId: string,
+    workspacePath: string,
+  ): Promise<{ content: string }> {
+    const fakeEvent = {
+      sender: {
+        id: -1,
+        send: () => { /* no-op: external caller doesn't consume stream */ },
+        isDestroyed: () => false,
+      },
+    } as unknown as Electron.IpcMainInvokeEvent;
+    return this.streamingHandler.handle(
+      fakeEvent,
+      prompt,
+      undefined,
+      sessionId,
+      workspacePath,
+    );
+  }
+
   constructor(sessionStore: SessionStore) {
     logger.main.info('[AIService] Constructor called');
     this.sessionManager = new SessionManager(sessionStore);

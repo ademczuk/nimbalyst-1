@@ -138,11 +138,25 @@ export class KimiClawProvider extends BaseAgentProvider {
 
       let isResumedSession = !!existingSwarmId;
       if (isResumedSession && existingSwarmId) {
-        // Check if the swarm is still alive
+        // Check if the swarm is still alive.
+        //
+        // 2026-05-18: status enum corrected. KCS's SwarmState
+        // (k2_6_types.py:209) emits one of:
+        //   in-flight: queued | decomposing | spawning | executing |
+        //              synthesizing | cancelling
+        //   terminal:  completed | failed | cancelled | budget_exhausted
+        // The previous check `status === 'running'` matched nothing
+        // because KCS never emits 'running' — so any resume on an
+        // in-flight swarm fell through both branches and silently
+        // dispatched a duplicate. Similarly the terminal branch missed
+        // 'budget_exhausted' so those swarms re-dispatched instead of
+        // rendering the persisted deliverable.
+        const IN_FLIGHT = new Set(['queued', 'decomposing', 'spawning', 'executing', 'synthesizing', 'cancelling']);
+        const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'budget_exhausted']);
         try {
           const snap = await this.protocol.getSnapshot(existingSwarmId);
           const status = snap.status as string;
-          if (status === 'running') {
+          if (IN_FLIGHT.has(status)) {
             // The existing swarm is still in flight. We don't yet have a
             // factored reattach path that can re-stream events from the
             // existing swarmId without going through the full
@@ -151,18 +165,18 @@ export class KimiClawProvider extends BaseAgentProvider {
             // silently dispatching a second swarm on top of the first
             // (which was the prior behaviour and caused duplicate
             // dispatches on resume).
-            console.log('[KIMICLAW] Existing swarm still running, not dispatching a new one:', existingSwarmId);
+            console.log('[KIMICLAW] Existing swarm still in flight, not dispatching a new one:', existingSwarmId, 'status=', status);
             const elapsedMs = (snap as { duration_ms?: number }).duration_ms ?? 0;
             const elapsedSec = Math.max(1, Math.floor(elapsedMs / 1000));
             yield {
               type: 'text',
-              content: `KimiClaw swarm ${existingSwarmId} is still running for this session (elapsed ${elapsedSec}s). Wait for it to finish, or cancel it from the KCS UI at http://127.0.0.1:9643 before sending another message.`,
+              content: `KimiClaw swarm ${existingSwarmId} is still ${status} for this session (elapsed ${elapsedSec}s). Wait for it to finish, or cancel it from the KCS UI at http://127.0.0.1:9643 before sending another message.`,
             };
             yield { type: 'complete', isComplete: true };
             return;
-          } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+          } else if (TERMINAL.has(status)) {
             // Terminal — render persisted deliverable as history
-            console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSwarmId);
+            console.log('[KIMICLAW] Swarm terminal, rendering history:', existingSwarmId, 'status=', status);
             const deliverable = snap.deliverable || snap.result;
             if (deliverable) {
               const text = typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable);
@@ -170,9 +184,15 @@ export class KimiClawProvider extends BaseAgentProvider {
               yield { type: 'complete', isComplete: true };
               return;
             }
+          } else {
+            // Unknown status — log it so a future KCS state addition
+            // doesn't silently fall through to a duplicate dispatch.
+            console.warn('[KIMICLAW] Unknown swarm status, treating as new session:', existingSwarmId, 'status=', status);
+            isResumedSession = false;
           }
         } catch {
-          // Snapshot failed — treat as new session
+          // Snapshot failed (e.g. 404 — swarm wiped by container rebuild
+          // in dev). Treat as new session so the user can keep working.
           console.warn('[KIMICLAW] Resume snapshot failed, treating as new session');
           isResumedSession = false;
         }
@@ -184,6 +204,30 @@ export class KimiClawProvider extends BaseAgentProvider {
         mcpServers = await this.mcpConfigService.getMcpServersConfig({ workspacePath, sessionId });
       } catch {
         // MCP optional — proceed without
+      }
+
+      // 2026-05-18: per-session timeout override. The control plane
+      // (controlRoutes.ts) stores the caller-supplied timeoutS into
+      // session metadata at create time so headless automation can
+      // dispatch large swarms (8+ agents) that need >1800s without
+      // changing the global provider default. Read once here; the
+      // value is plumbed into swarmDefaults below. Best-effort: if
+      // the session row is missing or metadata can't be parsed,
+      // fall back to provider default.
+      let sessionTimeoutOverride: number | undefined;
+      if (sessionId) {
+        try {
+          const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+          const sess = await AISessionsRepository.get(sessionId);
+          const mt = (sess as { metadata?: { timeoutS?: number } } | null)?.metadata?.timeoutS;
+          if (typeof mt === 'number' && mt > 0) {
+            sessionTimeoutOverride = mt;
+            console.log(`[KIMICLAW] timeout_s override from session metadata: ${mt}s for session ${sessionId}`);
+          }
+        } catch (err) {
+          // Non-fatal — provider default applies.
+          console.warn(`[KIMICLAW] failed to read session timeoutS override:`, err);
+        }
       }
 
       const sessionOptions = {
@@ -208,9 +252,28 @@ export class KimiClawProvider extends BaseAgentProvider {
             max_parallel: (this.config as any)?.maxParallel,
             // Per-swarm hard wall-clock budget. KCS watchdog cancels the
             // swarm at this elapsed time with a clean failure event.
-            // Default 300s matches KCS server-side default; bump in the
-            // settings panel for ambitious 4-6 agent prompts.
-            timeout_s: (this.config as any)?.timeoutS ?? 300,
+            //
+            // Per-swarm hard wall-clock budget. KCS watchdog cancels the
+            // swarm at this elapsed time with a clean failure event.
+            //
+            // 2026-05-18: bumped default 300s -> 900s -> 1800s. A persona
+            // swarm with 3-4 agents walking the cascade (kimi 120s + codex
+            // 180s + claude_cli 300s = up to 600s per agent, sequential
+            // within an agent because each tier waits for the previous to
+            // fail) needs more headroom than the original 300s. Empirical
+            // tonight: a 3-sentence 3-agent prompt hit 900s wall with
+            // 2/3 agents done; 1800s covers 5-6 agent swarms with
+            // cascade-walk slack. 8-agent DealMatrix-class runs should
+            // override via session metadata (timeoutS at create time —
+            // read below, takes precedence over the provider default).
+            // Override chain (highest wins):
+            //   1. session.metadata.timeoutS  — per-session, from
+            //      nimbalyst_create_session MCP tool's timeoutS param.
+            //      Loaded via getSessionTimeoutOverride() above.
+            //   2. this.config.timeoutS       — provider-level config
+            //      (settings panel "Timeout (s)" field).
+            //   3. 1800                       — module default.
+            timeout_s: sessionTimeoutOverride ?? (this.config as any)?.timeoutS ?? 1800,
             // Quality Control (KCS v4.12+). Defaults preserve pre-v4.12
             // behavior: verifier off, no retries.
             verifier_enabled: (this.config as any)?.verifierEnabled ?? false,
