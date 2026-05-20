@@ -1610,6 +1610,10 @@ export class AIService {
         case 'kimiclaw':
           // KimiClaw uses local HTTP bridge auth (cookie/bearer), no API key needed
           break;
+        case 'anismin':
+        case 'meridian':
+          // OpenClaw brains use their own local OAuth; no API key needed.
+          break;
         default:
           throw new Error(`Unknown provider: ${provider}`);
       }
@@ -2832,6 +2836,11 @@ export class AIService {
           break;
         case 'kimiclaw':
           // KimiClaw uses local HTTP bridge, no API key needed
+          apiKey = 'not-required';
+          break;
+        case 'anismin':
+        case 'meridian':
+          // OpenClaw brains use their own local OAuth; no API key needed.
           apiKey = 'not-required';
           break;
         default:
