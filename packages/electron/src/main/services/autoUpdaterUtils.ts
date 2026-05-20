@@ -35,7 +35,7 @@ export function categorizeDownloadDuration(durationMs: number): 'fast' | 'medium
 // and `net::ERR_SSL_*` are NOT listed here so they keep falling through to the
 // signature branch below. See #56 / #223.
 const CHROMIUM_NETWORK_ERROR =
-  /net::err_(name_not_resolved|internet_disconnected|network_changed|connection_(refused|reset|closed|timed_out|aborted|failed)|proxy_connection_failed|address_unreachable|name_resolution_failed|network_access_denied|timed_out)/;
+  /net::err_(name_not_resolved|name_resolution_failed|dns_\w+|icann_name_collision|internet_disconnected|network_\w+|connection_\w+|proxy_connection_failed|address_unreachable|socket_not_connected|timed_out)/;
 
 export function classifyUpdateError(error: Error): string {
   const message = error.message.toLowerCase();

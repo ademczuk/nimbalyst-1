@@ -57,13 +57,22 @@ describe('classifyUpdateError (issue #245)', () => {
   // never fired and users saw an "Update Error: net::ERR_NAME_NOT_RESOLVED"
   // toast from a transient DNS blip. See #56 / #223.
   it('classifies Chromium net:: connectivity errors as network', () => {
+    // DNS family (the reported error and its siblings)
     expect(classifyUpdateError(new Error('net::ERR_NAME_NOT_RESOLVED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_NAME_RESOLUTION_FAILED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_DNS_TIMED_OUT'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_DNS_SERVER_FAILED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_ICANN_NAME_COLLISION'))).toBe('network');
+    // Connectivity / network-state family
     expect(classifyUpdateError(new Error('net::ERR_INTERNET_DISCONNECTED'))).toBe('network');
     expect(classifyUpdateError(new Error('net::ERR_NETWORK_CHANGED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_NETWORK_IO_SUSPENDED'))).toBe('network');
     expect(classifyUpdateError(new Error('net::ERR_CONNECTION_REFUSED'))).toBe('network');
     expect(classifyUpdateError(new Error('net::ERR_CONNECTION_TIMED_OUT'))).toBe('network');
     expect(classifyUpdateError(new Error('net::ERR_PROXY_CONNECTION_FAILED'))).toBe('network');
     expect(classifyUpdateError(new Error('net::ERR_ADDRESS_UNREACHABLE'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_SOCKET_NOT_CONNECTED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_TIMED_OUT'))).toBe('network');
   });
 
   it('keeps net::ERR_CERT_* / net::ERR_SSL_* as signature, not network', () => {
