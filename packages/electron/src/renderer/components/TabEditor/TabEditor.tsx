@@ -743,15 +743,6 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             // skips because lastSavedContentRef still mismatches disk on
             // every retry; the banner stays up.
             logger.ui.info('[TabEditor] Autosave conflict detected -- showing non-blocking banner, buffer preserved');
-            try {
-              window.electronAPI?.send?.('telemetry:file-save-blocked-after-delete', {
-                layer: 'conflict-mismatch',
-                filePath,
-                wasAutosave: true,
-              });
-            } catch {
-              // Telemetry must never affect program behavior.
-            }
             if (typeof result.diskContent === 'string') {
               setAutosaveConflictDiskContent(result.diskContent);
             } else {

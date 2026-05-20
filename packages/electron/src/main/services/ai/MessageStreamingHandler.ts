@@ -1915,12 +1915,7 @@ export class MessageStreamingHandler {
               responseType,
               toolsUsed,
               usedChartTool,
-              responseTime: bucketResponseTime(perfLog.totalTime)
-            });
-
-            // Track ai_response_streamed analytics event (for streaming characteristics)
-            this.svc.analytics.sendEvent('ai_response_streamed', {
-              provider: session.provider,
+              responseTime: bucketResponseTime(perfLog.totalTime),
               chunkCount: bucketChunkCount(chunkCount),
               totalLength: bucketContentLength(fullResponse.length)
             });

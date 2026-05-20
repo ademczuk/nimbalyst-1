@@ -44,29 +44,6 @@ export class FileDeletedError extends Error {
   }
 }
 
-/**
- * Forward a save-blocked-after-delete telemetry signal to the main process.
- * Best effort; failure to emit telemetry must never affect save behavior.
- */
-function reportSaveBlockedAfterDelete(
-  layer: 'recently-deleted' | 'document-model-deleted' | 'conflict-mismatch',
-  filePath: string,
-  wasAutosave?: boolean,
-): void {
-  try {
-    const api = (window as {
-      electronAPI?: { send?: (channel: string, payload: unknown) => void };
-    }).electronAPI;
-    api?.send?.('telemetry:file-save-blocked-after-delete', {
-      layer,
-      filePath,
-      wasAutosave: wasAutosave ?? false,
-    });
-  } catch {
-    // No-op. Telemetry must never affect program behavior.
-  }
-}
-
 interface EditorAttachment {
   id: string;
   isDirty: boolean;
@@ -471,7 +448,6 @@ export class DocumentModel {
       // The file was deleted. Refuse to save until the user explicitly
       // reloads (which calls loadContent and clears the flag). This is the
       // model-side guard against autosave overwriting an AI-recreated file.
-      reportSaveBlockedAfterDelete('document-model-deleted', this.filePath);
       throw new FileDeletedError(this.filePath);
     }
 

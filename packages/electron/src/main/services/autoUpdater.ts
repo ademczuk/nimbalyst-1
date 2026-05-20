@@ -47,6 +47,11 @@ export class AutoUpdaterService {
   private pendingUpdateInfo: { version: string; releaseNotes?: string; releaseDate?: string } | null = null;
   private downloadStartTime: number | null = null; // Track download start time for duration analytics
   private downloadRetryAttempted = false; // Windows EPERM rename retry guard (one retry per user-initiated download)
+  // Dedup `update_error` analytics: the hourly background check produces a
+  // fresh `error` event every poll on networks that can't reach the update
+  // endpoint, which buries any real signal. Only emit when the
+  // (stage, error_type) tuple changes within a process lifetime.
+  private lastUpdateErrorKey: string | null = null;
 
   constructor() {
     // Configure electron-updater logger
@@ -93,6 +98,7 @@ export class AutoUpdaterService {
     autoUpdater.on('update-available', async (info) => {
       log.info('Update available:', info);
       this.isCheckingForUpdate = false;
+      this.lastUpdateErrorKey = null;
       const wasManualCheck = this.isManualCheck;
       this.isManualCheck = false;
 
@@ -128,6 +134,7 @@ export class AutoUpdaterService {
     autoUpdater.on('update-not-available', (info) => {
       log.info('Update not available:', info);
       this.isCheckingForUpdate = false;
+      this.lastUpdateErrorKey = null;
       // Only show up-to-date toast for manual (user-initiated) checks
       if (this.isManualCheck) {
         this.sendToFrontmostWindow('update-toast:up-to-date');
@@ -164,11 +171,15 @@ export class AutoUpdaterService {
       // If downloadStartTime is set, we were downloading; otherwise it was a check error
       const stage = wasDownloading ? 'download' : 'check';
       const errorType = classifyUpdateError(err);
-      AnalyticsService.getInstance().sendEvent('update_error', {
-        stage,
-        error_type: errorType,
-        release_channel: getReleaseChannel()
-      });
+      const errorKey = `${stage}:${errorType}`;
+      if (this.lastUpdateErrorKey !== errorKey) {
+        this.lastUpdateErrorKey = errorKey;
+        AnalyticsService.getInstance().sendEvent('update_error', {
+          stage,
+          error_type: errorType,
+          release_channel: getReleaseChannel()
+        });
+      }
       this.downloadStartTime = null;
       this.downloadRetryAttempted = false;
 
