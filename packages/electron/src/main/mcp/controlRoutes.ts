@@ -245,9 +245,9 @@ async function handleCreateSession(req: IncomingMessage, res: ServerResponse): P
       workspaceId: body.workspaceId,
       providerConfig: undefined,
       providerSessionId: undefined,
-      worktreeId: null,
+      worktreeId: undefined,
       agentRole: agentRole as any,
-      createdBySessionId: null,
+      createdBySessionId: undefined,
     });
     // Stash per-session overrides in metadata. The KimiClawProvider
     // reads .metadata.timeoutS at dispatch time (see KimiClawProvider.ts
@@ -441,7 +441,8 @@ async function handleListSessions(
 
   if (workspaceId) {
     try {
-      const sessions = await AISessionsRepository.list(workspaceId, { limit });
+      // SessionListOptions has no `limit`; the repo returns all, slice here.
+      const sessions = (await AISessionsRepository.list(workspaceId)).slice(0, limit);
       jsonResponse(res, 200, {
         workspace_id: workspaceId,
         session_count: sessions.length,
@@ -480,7 +481,7 @@ async function handleListSessions(
   const out: Array<Record<string, unknown>> = [];
   for (const wid of seenWorkspaces) {
     try {
-      const sessions = await AISessionsRepository.list(wid, { limit });
+      const sessions = (await AISessionsRepository.list(wid)).slice(0, limit);
       for (const s of sessions) {
         out.push({ ...s, workspaceId: wid });
       }

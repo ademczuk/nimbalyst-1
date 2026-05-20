@@ -78,6 +78,14 @@ export class ModelRegistry {
           const { KimiClawProvider } = await import('./providers/KimiClawProvider');
           models = await KimiClawProvider.getModels();
           break;
+        case 'anismin':
+          const { AnisminProvider } = await import('./providers/AnisminProvider');
+          models = await AnisminProvider.getModels();
+          break;
+        case 'meridian':
+          const { MeridianProvider } = await import('./providers/MeridianProvider');
+          models = await MeridianProvider.getModels();
+          break;
         default:
           assertExhaustiveProvider(provider);
       }
@@ -117,6 +125,8 @@ export class ModelRegistry {
     if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', undefined, apiKeys['lmstudio_url']));
     if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli'));
     if (shouldFetch('kimiclaw')) promises.push(this.getModelsForProvider('kimiclaw'));
+    if (shouldFetch('anismin')) promises.push(this.getModelsForProvider('anismin'));
+    if (shouldFetch('meridian')) promises.push(this.getModelsForProvider('meridian'));
 
     const results = await Promise.allSettled(promises);
 
@@ -161,6 +171,12 @@ export class ModelRegistry {
       case 'kimiclaw':
         const { KimiClawProvider: KCP } = await import('./providers/KimiClawProvider');
         return KCP.getDefaultModel();
+      case 'anismin':
+        const { AnisminProvider: ANP } = await import('./providers/AnisminProvider');
+        return ANP.getDefaultModel();
+      case 'meridian':
+        const { MeridianProvider: MRP } = await import('./providers/MeridianProvider');
+        return MRP.getDefaultModel();
       default:
         assertExhaustiveProvider(provider);
     }

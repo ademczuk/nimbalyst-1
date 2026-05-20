@@ -3167,6 +3167,14 @@ export class AIService {
         },
         'kimiclaw': {
           enabled: providerSettings['kimiclaw']?.enabled === true,
+        },
+        'anismin': {
+          // Anismin brain uses its own local OpenClaw OAuth; no API key.
+          enabled: providerSettings['anismin']?.enabled === true,
+        },
+        'meridian': {
+          // Meridian brain uses its own local OpenClaw OAuth; no API key.
+          enabled: providerSettings['meridian']?.enabled === true,
         }
       };
 

@@ -14,6 +14,8 @@ export type SettingsCategory =
   | 'copilot-cli'
   | 'kimiclaw'
   | 'lmstudio'
+  | 'anismin'
+  | 'meridian'
   | 'notifications'
   | 'voice-mode'
   | 'sync'
@@ -191,6 +193,20 @@ Best for quick edits and tasks that do not require multi-file operations.`,
           name: 'LM Studio',
           icon: getProviderIcon('lmstudio', { size: 16 }),
           statusDot: getStatusDot('lmstudio'),
+        },
+        {
+          id: 'anismin',
+          name: 'Anismin (OpenClaw)',
+          icon: getProviderIcon('anismin', { size: 16 }),
+          statusDot: getStatusDot('anismin'),
+          isAlpha: true,
+        },
+        {
+          id: 'meridian',
+          name: 'Meridian (Hermes)',
+          icon: getProviderIcon('meridian', { size: 16 }),
+          statusDot: getStatusDot('meridian'),
+          isAlpha: true,
         },
       ],
     },

@@ -128,7 +128,7 @@ export interface Message {
  * Add new providers here -- the type, runtime array, and exhaustiveness
  * checks all derive from this one definition.
  */
-export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'openai', 'openai-codex', 'openai-codex-acp', 'opencode', 'copilot-cli', 'kimiclaw', 'lmstudio'] as const;
+export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'openai', 'openai-codex', 'openai-codex-acp', 'opencode', 'copilot-cli', 'kimiclaw', 'lmstudio', 'anismin', 'meridian'] as const;
 
 export type AIProviderType = typeof AI_PROVIDER_TYPES[number];
 

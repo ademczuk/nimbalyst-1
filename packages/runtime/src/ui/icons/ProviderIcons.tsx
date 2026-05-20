@@ -11,6 +11,10 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   // ACP transport reuses the OpenAI Codex icon (same underlying agent).
   'openai-codex-acp': 'openai-codex',
   'kimiclaw': 'hive',
+  // Single-brain OpenClaw chat providers. Anismin = deep-sea brain;
+  // Meridian = navigation/compass (the narwhal navigator).
+  'anismin': 'psychology',
+  'meridian': 'explore',
 };
 
 export function resolveProviderIcon(provider: string): string {
