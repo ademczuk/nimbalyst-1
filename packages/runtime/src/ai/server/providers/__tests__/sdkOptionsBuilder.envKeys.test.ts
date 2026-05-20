@@ -70,10 +70,12 @@ function makeParams(overrides: Partial<Parameters<typeof buildSdkOptions>[1]> = 
 describe('buildSdkOptions env-key hardening', () => {
   let originalAnthropic: string | undefined;
   let originalOpenAI: string | undefined;
+  let originalEntrypoint: string | undefined;
 
   beforeEach(() => {
     originalAnthropic = process.env.ANTHROPIC_API_KEY;
     originalOpenAI = process.env.OPENAI_API_KEY;
+    originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
   });
 
   afterEach(() => {
@@ -86,6 +88,11 @@ describe('buildSdkOptions env-key hardening', () => {
       delete process.env.OPENAI_API_KEY;
     } else {
       process.env.OPENAI_API_KEY = originalOpenAI;
+    }
+    if (originalEntrypoint === undefined) {
+      delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    } else {
+      process.env.CLAUDE_CODE_ENTRYPOINT = originalEntrypoint;
     }
   });
 
@@ -126,5 +133,15 @@ describe('buildSdkOptions env-key hardening', () => {
     );
 
     expect(options.env.ANTHROPIC_API_KEY).toBe('sk-ant-user-configured');
+  });
+
+  it('sets the base env flags buildSdkOptions applies to every spawn', async () => {
+    delete process.env.CLAUDE_CODE_ENTRYPOINT;
+
+    const { options } = await buildSdkOptions(makeDeps(), makeParams());
+
+    // Flags buildSdkOptions always composes onto the spawned session env.
+    expect(options.env.ENABLE_TOOL_SEARCH).toBe('auto:2');
+    expect(options.env.CLAUDE_CODE_ENTRYPOINT).toBe('cli');
   });
 });
