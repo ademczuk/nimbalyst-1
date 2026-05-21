@@ -50,6 +50,39 @@ describe('classifyUpdateError (issue #245)', () => {
     expect(classifyUpdateError(new Error('ECONNREFUSED'))).toBe('network');
   });
 
+  // electron-updater runs through Electron's Chromium net stack, which reports
+  // connectivity failures as `net::ERR_*` strings the Node-style checks above
+  // miss. These were previously bucketed as 'unknown', so the background-poll
+  // toast suppression in autoUpdater.ts (gated on errorType === 'network')
+  // never fired and users saw an "Update Error: net::ERR_NAME_NOT_RESOLVED"
+  // toast from a transient DNS blip. See #56 / #223.
+  it('classifies Chromium net:: connectivity errors as network', () => {
+    // DNS family (the reported error and its siblings)
+    expect(classifyUpdateError(new Error('net::ERR_NAME_NOT_RESOLVED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_NAME_RESOLUTION_FAILED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_DNS_TIMED_OUT'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_DNS_SERVER_FAILED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_ICANN_NAME_COLLISION'))).toBe('network');
+    // Connectivity / network-state family
+    expect(classifyUpdateError(new Error('net::ERR_INTERNET_DISCONNECTED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_NETWORK_CHANGED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_NETWORK_IO_SUSPENDED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_CONNECTION_REFUSED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_CONNECTION_TIMED_OUT'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_PROXY_CONNECTION_FAILED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_ADDRESS_UNREACHABLE'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_SOCKET_NOT_CONNECTED'))).toBe('network');
+    expect(classifyUpdateError(new Error('net::ERR_TIMED_OUT'))).toBe('network');
+  });
+
+  it('keeps net::ERR_CERT_* / net::ERR_SSL_* as signature, not network', () => {
+    // The Chromium-net branch must NOT swallow certificate/TLS failures - those
+    // still belong in the signature bucket. Branch order (network before
+    // signature) makes this a real risk if the net:: match were too broad.
+    expect(classifyUpdateError(new Error('net::ERR_CERT_AUTHORITY_INVALID'))).toBe('signature');
+    expect(classifyUpdateError(new Error('net::ERR_CERT_DATE_INVALID'))).toBe('signature');
+  });
+
   it('preserves existing permission classification', () => {
     expect(classifyUpdateError(new Error('EACCES: permission denied'))).toBe('permission');
   });
