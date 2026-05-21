@@ -146,6 +146,35 @@ export class KimiClawRawParser implements IRawMessageParser {
     }
     this.processedEventIds.add(String(eventId));
 
+    // 2026-05-21 fix: the user's prompt (direction='input') is logged by
+    // KimiClawProvider as PLAIN TEXT, not a KCS JSON envelope. The
+    // envelope path below does JSON.parse(msg.content) and returns []
+    // on failure, so plain-text input was silently dropped — the user's
+    // prompt vanished from the rendered transcript ("should be up top").
+    // Mirror CodexRawParser.parseInputMessage: emit a user_message
+    // descriptor for input direction before the envelope logic. Because
+    // input is persisted first (earliest createdAt → lowest sequence),
+    // this also restores its position at the top of the transcript.
+    if (msg.direction === 'input') {
+      let text = String(msg.content ?? '');
+      // Tolerate a JSON-wrapped prompt ({prompt:"..."}) just in case a
+      // future code path stores it that way; fall back to raw text.
+      try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed && typeof parsed.prompt === 'string') text = parsed.prompt;
+      } catch { /* plain text — use as-is */ }
+      if (text.trim()) {
+        events.push({
+          type: 'user_message',
+          text,
+          mode: (msg.metadata?.mode as 'agent' | 'planning') ?? 'agent',
+          attachments: msg.metadata?.attachments as any,
+          createdAt: msg.createdAt,
+        });
+      }
+      return events;
+    }
+
     // The raw content can be EITHER:
     //   master envelope:  {type, swarm_id, timestamp, payload: {...}, seq}
     //   main envelope:    {type, data: {...}}
