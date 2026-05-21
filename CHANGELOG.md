@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-<!-- Bug fixes go here -->
+- Bug-report anonymizer now redacts the reporting session's workspace path and recognizes Windows path forms, so workspace directory names and the OS username stop leaking into the prefilled public GitHub issue. The `feedback_anonymize_text` tool documents a `<WORKSPACE>` redaction, but the handler only ever passed `homeDir`, so workspace paths outside the home directory (e.g. `C:\Projects\...`) passed through verbatim. The home-directory match was also exact-string, so forward-slash, Git Bash (`/c/...`), WSL (`/mnt/c/...`), and JSON-escaped path forms bypassed it and leaked the username on Windows. The handler now passes the session workspace path through to the anonymizer, and the path matcher normalizes those forms case-insensitively. (#396)
 
 ### Removed
 <!-- Removed features go here -->
