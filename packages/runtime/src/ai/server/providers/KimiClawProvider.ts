@@ -215,18 +215,34 @@ export class KimiClawProvider extends BaseAgentProvider {
       // the session row is missing or metadata can't be parsed,
       // fall back to provider default.
       let sessionTimeoutOverride: number | undefined;
+      let sessionVerifierOverride: boolean | undefined;
+      let sessionRetriesOverride: number | undefined;
       if (sessionId) {
         try {
           const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
           const sess = await AISessionsRepository.get(sessionId);
-          const mt = (sess as { metadata?: { timeoutS?: number } } | null)?.metadata?.timeoutS;
+          const meta = (sess as {
+            metadata?: { timeoutS?: number; verifierEnabled?: boolean; maxRetriesPerAgent?: number };
+          } | null)?.metadata;
+          const mt = meta?.timeoutS;
           if (typeof mt === 'number' && mt > 0) {
             sessionTimeoutOverride = mt;
             console.log(`[KIMICLAW] timeout_s override from session metadata: ${mt}s for session ${sessionId}`);
           }
+          // 2026-05-21: per-session research knobs (set by /nimbalyst-research
+          // via the control plane). Let a research session turn on the
+          // verifier + agent retries without the user touching global settings.
+          if (typeof meta?.verifierEnabled === 'boolean') {
+            sessionVerifierOverride = meta.verifierEnabled;
+            console.log(`[KIMICLAW] verifier_enabled override from session metadata: ${meta.verifierEnabled} for session ${sessionId}`);
+          }
+          if (typeof meta?.maxRetriesPerAgent === 'number' && meta.maxRetriesPerAgent >= 0) {
+            sessionRetriesOverride = meta.maxRetriesPerAgent;
+            console.log(`[KIMICLAW] max_retries_per_agent override from session metadata: ${meta.maxRetriesPerAgent} for session ${sessionId}`);
+          }
         } catch (err) {
           // Non-fatal — provider default applies.
-          console.warn(`[KIMICLAW] failed to read session timeoutS override:`, err);
+          console.warn(`[KIMICLAW] failed to read session metadata overrides:`, err);
         }
       }
 
@@ -274,15 +290,19 @@ export class KimiClawProvider extends BaseAgentProvider {
             //      (settings panel "Timeout (s)" field).
             //   3. 1800                       — module default.
             timeout_s: sessionTimeoutOverride ?? (this.config as any)?.timeoutS ?? 1800,
-            // Quality Control (KCS v4.12+). Defaults preserve pre-v4.12
-            // behavior: verifier off, no retries.
-            verifier_enabled: (this.config as any)?.verifierEnabled ?? false,
-            // 0 in the UI means "send null" so pre-v4.12 KCS treats it as
-            // no retry budget. >0 sends the integer.
-            max_retries_per_agent:
-              ((this.config as any)?.maxRetriesPerAgent ?? 0) === 0
-                ? null
-                : (this.config as any)?.maxRetriesPerAgent,
+            // Quality Control (KCS v4.12+). Per-session override (from the
+            // control plane, e.g. /nimbalyst-research) wins over the static
+            // provider config; both default to pre-v4.12 behavior (verifier
+            // off, no retries).
+            verifier_enabled:
+              sessionVerifierOverride ?? (this.config as any)?.verifierEnabled ?? false,
+            // 0 means "send null" so pre-v4.12 KCS treats it as no retry
+            // budget. >0 sends the integer. Session override wins.
+            max_retries_per_agent: (() => {
+              const r =
+                sessionRetriesOverride ?? (this.config as any)?.maxRetriesPerAgent ?? 0;
+              return r === 0 ? null : r;
+            })(),
             retry_on: (this.config as any)?.retryOn ?? 'exception,empty',
           },
           mcpServers,

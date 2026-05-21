@@ -209,6 +209,15 @@ interface CreateSessionBody {
   // to override its 1800s default. Useful for 8-agent DealMatrix-class
   // prompts that need 2400-3600s. Ignored by non-KCS providers.
   timeoutS?: number;
+  // 2026-05-21: per-session research-quality knobs. verifierEnabled turns
+  // on the Mavis cold-start verifier (independent reviewer that flags
+  // missing citations / fabrication / non-responsive agents);
+  // maxRetriesPerAgent retries empty/failed agents instead of accepting a
+  // stub. Both stored in metadata and read by KimiClawProvider at dispatch.
+  // This lets /nimbalyst-research enable verification per-session without
+  // the user toggling global provider settings. Ignored by non-KCS providers.
+  verifierEnabled?: boolean;
+  maxRetriesPerAgent?: number;
 }
 
 async function handleCreateSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -253,9 +262,22 @@ async function handleCreateSession(req: IncomingMessage, res: ServerResponse): P
     // reads .metadata.timeoutS at dispatch time (see KimiClawProvider.ts
     // sessionTimeoutOverride lookup). Skipped when no overrides supplied
     // to avoid an unnecessary write.
+    const sessionMeta: Record<string, unknown> = {};
     if (typeof body.timeoutS === "number" && body.timeoutS > 0) {
+      sessionMeta.timeoutS = body.timeoutS;
+    }
+    if (typeof body.verifierEnabled === "boolean") {
+      sessionMeta.verifierEnabled = body.verifierEnabled;
+    }
+    if (
+      typeof body.maxRetriesPerAgent === "number" &&
+      body.maxRetriesPerAgent >= 0
+    ) {
+      sessionMeta.maxRetriesPerAgent = body.maxRetriesPerAgent;
+    }
+    if (Object.keys(sessionMeta).length > 0) {
       await AISessionsRepository.updateMetadata(sessionId, {
-        metadata: { timeoutS: body.timeoutS },
+        metadata: sessionMeta,
       });
     }
     // Two refresh strategies fire here:
