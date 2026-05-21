@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Bug-report anonymizer redacts the session workspace path and recognizes Windows / Git Bash / WSL / JSON-escaped path forms so usernames and project names stop leaking into prefilled issues. (#396)
 - Imported Claude Code sessions are labelled with the model actually used (per-turn `model` from the JSONL), not always Sonnet. (#394)
+- Transcript, model-picker, session-history, and shared editor dropdown menus now use floating-ui portals so they stay visible instead of clipping inside panels.
 
 ### Removed
 <!-- Removed features go here -->
