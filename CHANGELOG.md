@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files Mode editor now surfaces AI edits to blockquote lines as red/green diffs, the same as plain paragraphs. (#433)
 - Project quick open now loads recent projects from stored recents instead of crawling every workspace on open.
 - Rebuild Extensions submenu now lists buildable extensions alphabetically.
+- Shared Excalidraw and mockup tabs no longer come back blank after restart or close+reopen — the document type is now persisted with each open tab and recovered server-side as a backstop.
 - Tracker list, table, and kanban views now share the session-style `#tag` typeahead filter.
 - Session history search bar no longer overlaps floating popovers (e.g. Claude Usage).
 - Re-uploading a local source into a shared markdown document now waits for the collab write to be acknowledged before tearing down the headless sync client.

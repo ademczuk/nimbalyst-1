@@ -16,6 +16,7 @@ import { findTeamForWorkspace, getOrgScopedJwt } from '../services/TeamService';
 import { getOrgKey, getOrgKeyFingerprint, getOrCreateIdentityKeyPair, uploadIdentityKeyToOrg, fetchAndUnwrapOrgKey, clearOrgKey } from '../services/OrgKeyService';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { getPersonalDocSyncConfig, isSyncEnabled } from '../services/SyncManager';
+import { resolveCollabDocumentType } from './collabDocumentTypeResolver';
 import { getSyncId } from '../services/DocSyncService';
 import {
   registerCollabAssetDocument,
@@ -160,9 +161,21 @@ export function registerDocumentSyncHandlers(): void {
     const orgKeyBase64 = Buffer.from(rawBytes).toString('base64');
 
     const serverUrl = getCollabSyncWsUrl();
+    const workspaceState = getWorkspaceState(payload.workspacePath);
     const pendingKey = getCollabPendingKey(orgId, payload.documentId);
-    const pendingUpdateBase64 = getWorkspaceState(payload.workspacePath)
+    const pendingUpdateBase64 = workspaceState
       .collabPendingUpdates?.[pendingKey]?.mergedUpdateBase64;
+
+    // Defensive: if the caller didn't pass documentType, fall back to the
+    // renderer-persisted entry list. Some restore paths only know the
+    // documentId; without a resolved documentType, CollaborativeTabEditor
+    // renders shared docs through the markdown branch and Excalidraw /
+    // mockup Y.Docs come back blank.
+    const resolvedDocumentType = resolveCollabDocumentType({
+      callerDocumentType: payload.documentType,
+      workspaceState: workspaceState as unknown as { openCollabDocumentEntries?: unknown },
+      documentId: payload.documentId,
+    });
 
     // logger.main.info('[DocumentSyncHandlers] Resolved collab config', {
     //   orgId,
@@ -199,7 +212,7 @@ export function registerDocumentSyncHandlers(): void {
         orgId,
         documentId: payload.documentId,
         title: payload.title || payload.documentId,
-        documentType: payload.documentType,
+        documentType: resolvedDocumentType,
         orgKeyBase64,
         orgKeyFingerprint: orgKeyFp,
         serverUrl,
