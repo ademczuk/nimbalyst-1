@@ -15,6 +15,7 @@ export type SettingsCategory =
   | 'gemini-cli'
   | 'lmstudio'
   | 'antigravity-gemini'
+  | 'antigravity-gemini-agent'
   | 'notifications'
   | 'voice-mode'
   | 'sync'
@@ -156,6 +157,13 @@ Best for complex coding tasks.`,
           name: 'GitHub Copilot',
           icon: <MaterialSymbol icon="terminal" size={16} />,
           statusDot: getStatusDot('copilot-cli'),
+          isAlpha: true,
+        },
+        {
+          id: 'antigravity-gemini-agent',
+          name: 'Gemini Agent (Antigravity)',
+          icon: <MaterialSymbol icon="smart_toy" size={16} />,
+          statusDot: getStatusDot('antigravity-gemini-agent'),
           isAlpha: true,
         },
       ],

@@ -2828,7 +2828,9 @@ export class AIService {
           apiKey = 'not-required';
           break;
         case 'antigravity-gemini':
+        case 'antigravity-gemini-agent':
           // Antigravity rides the user's existing ~/.gemini login; no API key stored.
+          // Both the chat provider and the agent provider use the same local server.
           apiKey = 'not-required';
           break;
         default:
@@ -2968,7 +2970,7 @@ export class AIService {
         // Auth rides the user's existing Antigravity/Google login; nimbalyst stores no
         // key and never triggers a browser OAuth. This must run in the main process
         // because AntigravityServerManager spawns/attaches to a child process.
-        if (provider === 'antigravity-gemini') {
+        if (provider === 'antigravity-gemini' || provider === 'antigravity-gemini-agent') {
           const { AntigravityServerManager } = await import(
             '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityServerManager'
           );
@@ -2989,10 +2991,20 @@ export class AIService {
             };
           }
           try {
-            const { AntigravityProvider } = await import(
-              '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityProvider'
-            );
-            const models = await AntigravityProvider.getModels();
+            // Both providers fetch from the same local catalog; the agent provider
+            // surfaces its own subset/labels via AntigravityAgentProvider.getModels().
+            let models;
+            if (provider === 'antigravity-gemini-agent') {
+              const { AntigravityAgentProvider } = await import(
+                '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityAgentProvider'
+              );
+              models = await AntigravityAgentProvider.getModels();
+            } else {
+              const { AntigravityProvider } = await import(
+                '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityProvider'
+              );
+              models = await AntigravityProvider.getModels();
+            }
             if (!models || models.length === 0) {
               return {
                 success: false,
@@ -3103,6 +3115,9 @@ export class AIService {
       // Without this the Chat Providers settings panel shows "No models found" because
       // getAllModels never asks the registry for the antigravity descriptor's models.
       if (providerSettings['antigravity-gemini']?.enabled === true) enabledSet.add('antigravity-gemini');
+      // Same for the agent variant (Agent Providers panel) -- it shares the local
+      // Antigravity server and surfaces its own model subset/labels.
+      if (providerSettings['antigravity-gemini-agent']?.enabled === true) enabledSet.add('antigravity-gemini-agent');
 
       const modelsConfig = {
         ...apiKeys,
@@ -3246,6 +3261,11 @@ export class AIService {
           // Auth rides ~/.gemini (no API key); respect the user's toggle.
           enabled: providerSettings['antigravity-gemini']?.enabled === true,
           models: providerSettings['antigravity-gemini']?.models
+        },
+        'antigravity-gemini-agent': {
+          // Agent variant: same auth as the chat provider; rides ~/.gemini login.
+          enabled: providerSettings['antigravity-gemini-agent']?.enabled === true,
+          models: providerSettings['antigravity-gemini-agent']?.models
         }
       };
 

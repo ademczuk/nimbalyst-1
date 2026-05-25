@@ -1112,6 +1112,8 @@ const defaultProviders: Record<string, ProviderConfig> = {
   lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
   // Antigravity-backed Gemini (chat provider). Auth rides ~/.gemini; no API key.
   'antigravity-gemini': { enabled: false, testStatus: 'idle' },
+  // Antigravity-backed Gemini (agent provider - tool-loop over GetModelResponse).
+  'antigravity-gemini-agent': { enabled: false, testStatus: 'idle' },
 };
 
 for (const descriptor of ProviderRegistry.list()) {

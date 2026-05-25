@@ -61,6 +61,16 @@ export const BUILTIN_PROVIDER_METADATA: ProviderDescriptor[] = [
     isAgent: false, isChat: true, requiresApiKey: false, dynamicModels: true,
     transcriptParser: 'claude-code', icon: 'gemini-cli',
   },
+  {
+    // Gemini 3.5 Flash AGENT provider backed by the local Antigravity language
+    // server. AGENT provider (not chat): uses a Nimbalyst-orchestrated tool loop
+    // over GetModelResponse. Supports meta-agent mode. No MCP passthrough; tools
+    // are injected as JSON schema in the system prompt. Auth rides ~/.gemini login.
+    id: 'antigravity-gemini-agent', label: 'Gemini 3.5 Flash (Agent)', source: 'builtin',
+    defaultModelId: 'antigravity-gemini-agent:gemini-3-flash-agent',
+    isAgent: true, isChat: false, requiresApiKey: false, dynamicModels: true,
+    transcriptParser: 'claude-code', icon: 'gemini-cli',
+  },
   // gemini-cli ships as a marketplace extension (registers via the aiProviders
   // contribution), so it is intentionally absent from the built-in metadata.
 ];

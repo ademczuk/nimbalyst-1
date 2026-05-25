@@ -19,6 +19,7 @@ import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
 import { AntigravityProvider } from './providers/antigravity/AntigravityProvider';
+import { AntigravityAgentProvider } from './providers/antigravity/AntigravityAgentProvider';
 
 interface HeavyImpl {
   createInstance: () => AIProvider;
@@ -72,6 +73,11 @@ const HEAVY: Record<string, HeavyImpl> = {
     // Returns empty array if the Antigravity server can't be reached.
     getModels: () => AntigravityProvider.getModels(),
     getDefaultModel: () => `antigravity-gemini:${AntigravityProvider.DEFAULT_MODEL}`,
+  },
+  'antigravity-gemini-agent': {
+    createInstance: () => new AntigravityAgentProvider(),
+    getModels: () => AntigravityAgentProvider.getModels(),
+    getDefaultModel: () => AntigravityAgentProvider.getDefaultModel(),
   },
   // gemini-cli is no longer a built-in: it ships as a marketplace extension
   // and registers itself through the aiProviders contribution + the main-side
