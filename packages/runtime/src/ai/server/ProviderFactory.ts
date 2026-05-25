@@ -11,6 +11,7 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
+import { AntigravityProvider } from './providers/antigravity/AntigravityProvider';
 import { ProviderConfig, AIProviderType, assertExhaustiveProvider } from './types';
 
 export class ProviderFactory {
@@ -74,6 +75,9 @@ export class ProviderFactory {
         break;
       case 'copilot-cli':
         provider = new CopilotCLIProvider();
+        break;
+      case 'antigravity-gemini':
+        provider = new AntigravityProvider();
         break;
       default:
         assertExhaustiveProvider(type);

@@ -74,6 +74,11 @@ export class ModelRegistry {
           const { CopilotCLIProvider } = await import('./providers/CopilotCLIProvider');
           models = await CopilotCLIProvider.getModels();
           break;
+        case 'antigravity-gemini':
+          // Returns empty array if the Antigravity server can't be reached.
+          const { AntigravityProvider } = await import('./providers/antigravity/AntigravityProvider');
+          models = await AntigravityProvider.getModels();
+          break;
         default:
           assertExhaustiveProvider(provider);
       }
@@ -112,6 +117,7 @@ export class ModelRegistry {
     if (shouldFetch('opencode')) promises.push(this.getModelsForProvider('opencode'));
     if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', undefined, apiKeys['lmstudio_url']));
     if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli'));
+    if (shouldFetch('antigravity-gemini')) promises.push(this.getModelsForProvider('antigravity-gemini'));
 
     const results = await Promise.allSettled(promises);
 
@@ -153,6 +159,9 @@ export class ModelRegistry {
       case 'copilot-cli':
         const { CopilotCLIProvider: CLP } = await import('./providers/CopilotCLIProvider');
         return CLP.getDefaultModel();
+      case 'antigravity-gemini':
+        const { AntigravityProvider: AGP } = await import('./providers/antigravity/AntigravityProvider');
+        return `antigravity-gemini:${AGP.DEFAULT_MODEL}`;
       default:
         assertExhaustiveProvider(provider);
     }

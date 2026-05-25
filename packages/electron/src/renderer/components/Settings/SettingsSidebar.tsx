@@ -13,6 +13,7 @@ export type SettingsCategory =
   | 'opencode'
   | 'copilot-cli'
   | 'lmstudio'
+  | 'antigravity-gemini'
   | 'notifications'
   | 'voice-mode'
   | 'sync'
@@ -183,6 +184,13 @@ Best for quick edits and tasks that do not require multi-file operations.`,
           name: 'LM Studio',
           icon: getProviderIcon('lmstudio', { size: 16 }),
           statusDot: getStatusDot('lmstudio'),
+        },
+        {
+          id: 'antigravity-gemini',
+          name: 'Gemini (Antigravity)',
+          icon: <MaterialSymbol icon="auto_awesome" size={16} />,
+          statusDot: getStatusDot('antigravity-gemini'),
+          isAlpha: true,
         },
       ],
     },

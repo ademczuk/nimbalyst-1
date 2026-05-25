@@ -14,6 +14,7 @@ import { OpenAICodexPanel } from '../GlobalSettings/panels/OpenAICodexPanel';
 import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
 import { LMStudioPanel } from '../GlobalSettings/panels/LMStudioPanel';
+import { AntigravityPanel } from '../GlobalSettings/panels/AntigravityPanel';
 import { AdvancedPanel } from '../GlobalSettings/panels/AdvancedPanel';
 import { AgentFeaturesPanel } from './AgentFeaturesPanel';
 import { BetaFeaturesPanel } from '../GlobalSettings/panels/BetaFeaturesPanel';
@@ -145,8 +146,8 @@ export function SettingsView({
   const [workspaceMcpServerCount, setWorkspaceMcpServerCount] = useState(0);
 
   // Valid categories for each scope
-  const projectCategories: SettingsCategory[] = ['agent-permissions', 'team', 'tracker-config', 'installed-extensions', 'claude-plugins', 'mcp-servers', 'claude-code', 'claude', 'openai', 'openai-codex', 'opencode', 'copilot-cli', 'lmstudio'];
-  const userCategories: SettingsCategory[] = ['claude-code', 'claude', 'openai', 'openai-codex', 'opencode', 'copilot-cli', 'lmstudio', 'sync', 'notifications', 'voice-mode', 'agent-features', 'advanced', 'marketplace', 'installed-extensions', 'claude-plugins', 'mcp-servers'];
+  const projectCategories: SettingsCategory[] = ['agent-permissions', 'team', 'tracker-config', 'installed-extensions', 'claude-plugins', 'mcp-servers', 'claude-code', 'claude', 'openai', 'openai-codex', 'opencode', 'copilot-cli', 'lmstudio', 'antigravity-gemini'];
+  const userCategories: SettingsCategory[] = ['claude-code', 'claude', 'openai', 'openai-codex', 'opencode', 'copilot-cli', 'lmstudio', 'antigravity-gemini', 'sync', 'notifications', 'voice-mode', 'agent-features', 'advanced', 'marketplace', 'installed-extensions', 'claude-plugins', 'mcp-servers'];
 
   // When initialCategory/initialScope props change, update state (for deep linking)
   useEffect(() => {
@@ -544,6 +545,8 @@ export function SettingsView({
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
       case 'lmstudio':
         return wrapWithOverride('lmstudio', 'LM Studio', <LMStudioPanel {...commonProps} />);
+      case 'antigravity-gemini':
+        return wrapWithOverride('antigravity-gemini', 'Gemini (Antigravity)', <AntigravityPanel {...commonProps} />);
       case 'advanced':
         // AdvancedPanel is self-contained - uses Jotai atoms and IPC directly
         return <AdvancedPanel />;

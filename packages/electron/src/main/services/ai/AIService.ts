@@ -3102,6 +3102,11 @@ export class AIService {
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
           models: providerSettings['lmstudio']?.models
+        },
+        'antigravity-gemini': {
+          // Auth rides ~/.gemini (no API key); respect the user's toggle.
+          enabled: providerSettings['antigravity-gemini']?.enabled === true,
+          models: providerSettings['antigravity-gemini']?.models
         }
       };
 

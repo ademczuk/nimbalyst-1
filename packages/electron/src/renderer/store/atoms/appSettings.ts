@@ -1099,6 +1099,8 @@ const defaultProviders: Record<string, ProviderConfig> = {
   opencode: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   'copilot-cli': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
+  // Antigravity-backed Gemini (chat provider). Auth rides ~/.gemini; no API key.
+  'antigravity-gemini': { enabled: false, testStatus: 'idle' },
 };
 
 /**
