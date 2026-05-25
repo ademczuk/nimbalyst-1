@@ -1690,6 +1690,12 @@ export const reloadSessionDataAtom = atom(
             // the correct position (end of transcript). They'll be naturally
             // replaced on the next reload once the provider has persisted
             // canonical versions with real positive IDs.
+            //
+            // v4.16 attempt to sort by createdAt was REVERTED 2026-05-17 21:55
+            // because it caused the user message to disappear entirely from
+            // the rendered transcript. Real cause of "question at bottom"
+            // needs a different fix — needs proper repro before another
+            // speculative attempt.
             sessionData.messages = [...dbMessages, ...optimisticMessages];
           } else {
             sessionData.messages = dbMessages;

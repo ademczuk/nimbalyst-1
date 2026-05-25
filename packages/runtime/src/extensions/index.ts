@@ -41,6 +41,9 @@ export type {
   // Panel types
   PanelContribution,
   SettingsPanelContribution,
+  AiProviderContribution,
+  AiProviderExport,
+  AiProviderTranscriptParser,
   LoadedPanel,
   PanelHostProps,
   PanelGutterButtonProps,

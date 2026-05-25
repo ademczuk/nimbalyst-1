@@ -270,6 +270,10 @@
         "to": "assets"
       },
       {
+        "from": "resources/bundled-extensions",
+        "to": "bundled-extensions"
+      },
+      {
         "from": "resources/generated",
         "to": "legal",
         "filter": [

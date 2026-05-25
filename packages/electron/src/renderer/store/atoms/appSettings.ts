@@ -25,6 +25,8 @@ import { BetaFeatureTag } from '../../../shared/betaFeatures';
 import { DeveloperFeatureTag, DEVELOPER_FEATURES, getDefaultDeveloperFeatures, enableAllDeveloperFeatures, disableAllDeveloperFeatures, areAllDeveloperFeaturesEnabled } from '../../../shared/developerFeatures';
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { setDebugFlags as mirrorDebugFlagsToGlobal, type NimbalystDebugFlags } from '@nimbalyst/runtime/utils/debugFlags';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
+import { registerBuiltinProviderMetadata } from '@nimbalyst/runtime/ai/server/registerBuiltinProviderMetadata';
 
 // Voice type - all available OpenAI Realtime voices
 export type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
@@ -1087,8 +1089,17 @@ export interface AIProviderSettings {
   availableModels: Record<string, AIModel[]>;
 }
 
+// Register built-in provider metadata once so the registry can supply defaults
+// for any provider id (built-in or extension-contributed) not covered by the
+// static maps below. Idempotent; the renderer entry point also calls this.
+registerBuiltinProviderMetadata();
+
 /**
  * Default provider configurations.
+ *
+ * Static built-in entries are authoritative and kept as-is. Registry-derived
+ * defaults are then merged on top so any provider id present in the registry
+ * (including extension-contributed ones) but missing here gets a sane default.
  */
 const defaultProviders: Record<string, ProviderConfig> = {
   claude: { enabled: false, testStatus: 'idle' },
@@ -1103,8 +1114,18 @@ const defaultProviders: Record<string, ProviderConfig> = {
   'antigravity-gemini': { enabled: false, testStatus: 'idle' },
 };
 
+for (const descriptor of ProviderRegistry.list()) {
+  if (!defaultProviders[descriptor.id]) {
+    defaultProviders[descriptor.id] = { enabled: false, testStatus: 'idle', installStatus: 'not-installed' };
+  }
+}
+
 /**
  * Default API keys.
+ *
+ * Static built-in keys are kept as-is. For any registry provider that declares
+ * an `apiKeyName`/`baseUrlName` not already covered, add an empty default so a
+ * new/extension provider has a place to store its key without breaking built-ins.
  */
 const defaultApiKeys: Record<string, string> = {
   anthropic: '',
@@ -1113,6 +1134,15 @@ const defaultApiKeys: Record<string, string> = {
   'openai-codex': '',
   lmstudio_url: 'http://127.0.0.1:8234',
 };
+
+for (const descriptor of ProviderRegistry.list()) {
+  if (descriptor.apiKeyName && !(descriptor.apiKeyName in defaultApiKeys)) {
+    defaultApiKeys[descriptor.apiKeyName] = '';
+  }
+  if (descriptor.baseUrlName && !(descriptor.baseUrlName in defaultApiKeys)) {
+    defaultApiKeys[descriptor.baseUrlName] = '';
+  }
+}
 
 /**
  * Default AI provider settings.

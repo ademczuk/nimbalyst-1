@@ -285,6 +285,7 @@ ${exportNames.map((name) => `export const ${name} = __mod?.${name};`).join('\n')
           slashCommandHandlers: module.slashCommandHandlers || module.default?.slashCommandHandlers || {},
           panels: module.panels || module.default?.panels || {},
           settingsPanel: module.settingsPanel || module.default?.settingsPanel || {},
+          aiProviders: module.aiProviders || module.default?.aiProviders || {},
         };
 
         return extensionModule;

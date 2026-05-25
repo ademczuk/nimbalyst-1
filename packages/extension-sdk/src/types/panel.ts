@@ -348,6 +348,64 @@ export interface PanelHost {
    * @returns Promise resolving to exec result with stdout, stderr, and exit code
    */
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+
+  /**
+   * Spawn a long-lived child process and stream its stdio.
+   *
+   * Unlike {@link exec} (one-shot, buffered, returns after the process exits),
+   * `spawn` keeps the process alive and gives you an event-driven handle so you
+   * can stream stdout/stderr and write to stdin over a persistent channel. This
+   * is what an agent protocol like `gemini --acp` needs (open JSON-RPC stdio).
+   *
+   * Requires the extension to declare `"process": true` permission in
+   * manifest.json. Without it, the returned handle rejects on creation.
+   *
+   * The returned promise resolves once the process has been spawned in the main
+   * process. Subscribe to output via {@link ExtensionSpawnHandle.onStdout} /
+   * `onStderr` and lifecycle via `onExit` BEFORE writing, then call `write` to
+   * feed stdin and `kill` to terminate.
+   *
+   * @param command Executable to run (absolute path, or a name on PATH; on
+   *   Windows a `.cmd`/`.bat` shim is run through a shell automatically)
+   * @param args Arguments passed to the executable
+   * @param options Spawn options (cwd, env)
+   * @returns Promise resolving to a handle for streaming/writing/killing
+   */
+  spawn(command: string, args?: string[], options?: SpawnOptions): Promise<ExtensionSpawnHandle>;
+}
+
+/**
+ * Options for PanelHost.spawn() subprocess execution.
+ */
+export interface SpawnOptions {
+  /** Working directory (defaults to the spawning process's cwd) */
+  cwd?: string;
+  /** Environment variables to merge with process.env */
+  env?: Record<string, string>;
+}
+
+/**
+ * Handle to a long-lived process spawned via PanelHost.spawn().
+ *
+ * Event-driven: register listeners with onStdout/onStderr/onExit (each returns
+ * an unsubscribe function), push input with write(), and terminate with kill().
+ * Once the process exits, the exit listeners fire with the code/signal and the
+ * handle is cleaned up in the main process; further write/kill calls are no-ops
+ * that resolve without error.
+ */
+export interface ExtensionSpawnHandle {
+  /** Opaque handle id assigned by the main process. */
+  readonly handleId: string;
+  /** Write a chunk to the process's stdin. */
+  write(data: string): Promise<void>;
+  /** Terminate the process and release its handle. Idempotent. */
+  kill(): Promise<void>;
+  /** Subscribe to stdout chunks. Returns an unsubscribe function. */
+  onStdout(callback: (data: string) => void): () => void;
+  /** Subscribe to stderr chunks. Returns an unsubscribe function. */
+  onStderr(callback: (data: string) => void): () => void;
+  /** Subscribe to process exit. Returns an unsubscribe function. */
+  onExit(callback: (info: { code: number | null; signal: string | null }) => void): () => void;
 }
 
 /**

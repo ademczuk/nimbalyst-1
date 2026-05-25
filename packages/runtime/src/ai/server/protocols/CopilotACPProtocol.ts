@@ -16,6 +16,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createInterface, Interface as ReadlineInterface } from 'readline';
+import path from 'path';
 import {
   AgentProtocol,
   ProtocolSession,
@@ -93,9 +94,30 @@ export class CopilotACPProtocol implements AgentProtocol {
       return this.process;
     }
 
-    const proc = spawn(this.command, this.baseArgs, {
+    // Windows: Node 20.12.2+/22 throw `spawn EINVAL` when spawning a `.cmd`/`.bat`
+    // shim by full path without `shell: true` (CVE-2024-27980 mitigation). npm-global
+    // CLIs resolve to `.cmd` shims on Windows. Quoting the full path under a shell
+    // also fails (cmd.exe mangles backslashes), so instead prepend the command's
+    // directory to PATH and spawn the basename under a shell. POSIX is untouched.
+    const isWinScript = process.platform === 'win32' && /\.(cmd|bat)$/i.test(this.command);
+    let command = this.command;
+    let spawnEnv: NodeJS.ProcessEnv = this.processEnv ?? process.env;
+    if (isWinScript) {
+      const dir = path.dirname(this.command);
+      const merged: Record<string, string> = {};
+      for (const [k, v] of Object.entries(this.processEnv ?? process.env)) {
+        if (typeof v === 'string') merged[k] = v;
+      }
+      merged.PATH = dir + path.delimiter + (merged.PATH ?? merged.Path ?? '');
+      spawnEnv = merged;
+      command = path.basename(this.command);
+    }
+
+    const proc = spawn(command, this.baseArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: this.processEnv ?? process.env,
+      env: spawnEnv,
+      shell: isWinScript,
+      windowsHide: true,
     });
 
     this.process = proc;

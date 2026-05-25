@@ -16,7 +16,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import extractZip from 'extract-zip';
-import { BrowserWindow, net } from 'electron';
+import { app, BrowserWindow, net } from 'electron';
 import { logger } from '../utils/logger';
 import { safeHandle } from '../utils/ipcRegistry';
 import { getUserExtensionsDirectory, initializeExtensionFileTypes } from './ExtensionHandlers';
@@ -58,6 +58,13 @@ export interface RegistryExtension {
   checksum: string;
   repositoryUrl: string;
   changelog: string;
+  /**
+   * When true, this extension ships bundled with the app (not in the public
+   * upstream catalog). Its `downloadUrl` uses the `bundled:<file>` scheme and
+   * the package is read from the app's bundled-extensions resources. Local
+   * extras are merged into the live registry so they appear in the grid.
+   */
+  local?: boolean;
 }
 
 export interface RegistryCategory {
@@ -87,6 +94,50 @@ interface InstallResult {
 let pendingMarketplaceInstallRequest: PendingMarketplaceInstallRequest | null = null;
 
 /**
+ * Merge bundled local-only extensions (e.g. gemini-cli) into a registry result
+ * so they appear in the marketplace grid alongside the live upstream catalog.
+ * Only entries flagged `local` in the bundled registry are merged, and only
+ * when not already present in the live data.
+ */
+function mergeLocalExtensions(data: RegistryData): void {
+  const localExtras = ((mockRegistry as RegistryData).extensions || []).filter(e => e.local);
+  if (localExtras.length === 0) return;
+  const haveIds = new Set((data.extensions || []).map(e => e.id));
+  if (!data.extensions) data.extensions = [];
+  for (const extra of localExtras) {
+    if (!haveIds.has(extra.id)) data.extensions.push(extra);
+  }
+}
+
+/**
+ * Resolve a bundled .nimext file shipped in the app's resources. Mirrors the
+ * built-in extensions directory resolution for packaged vs dev (vite build)
+ * runs. Returns null if not found.
+ */
+async function resolveBundledNimext(fileName: string): Promise<string | null> {
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'bundled-extensions', fileName),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions', fileName),
+      ]
+    : [
+        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
+        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions', fileName),
+        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions', fileName),
+        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions', fileName),
+      ];
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+/**
  * Fetch registry data from the live Cloudflare Worker.
  * Falls back to mock data if the live registry is unreachable.
  */
@@ -103,6 +154,7 @@ async function fetchRegistry(): Promise<RegistryData> {
 
     if (response.ok) {
       const data = await response.json() as RegistryData;
+      mergeLocalExtensions(data);
       registryCache = data;
       registryCacheTimestamp = now;
       logger.main.info(`[ExtMarketplace] Fetched live registry: ${data.extensions?.length ?? 0} extensions`);
@@ -220,6 +272,7 @@ async function installFromUrl(
   const extensionsDir = await getUserExtensionsDirectory();
   const installPath = path.join(extensionsDir, extensionId);
   let tempFile: string | null = null;
+  let cleanupTemp = true;
 
   try {
     logger.main.info(`[ExtMarketplace] Installing extension: ${extensionId} v${version}`);
@@ -228,9 +281,20 @@ async function installFromUrl(
       return { success: false, error: 'No download URL available' };
     }
 
-    // 1. Download .nimext file
-    logger.main.info(`[ExtMarketplace] Downloading: ${downloadUrl}`);
-    tempFile = await downloadFile(downloadUrl);
+    // 1. Obtain the .nimext: bundled-local (bundled:<file>) or remote download.
+    if (downloadUrl.startsWith('bundled:')) {
+      const fileName = downloadUrl.slice('bundled:'.length);
+      const bundledPath = await resolveBundledNimext(fileName);
+      if (!bundledPath) {
+        return { success: false, error: `Bundled extension package not found: ${fileName}` };
+      }
+      logger.main.info(`[ExtMarketplace] Using bundled package: ${bundledPath}`);
+      tempFile = bundledPath;
+      cleanupTemp = false; // never delete the bundled source
+    } else {
+      logger.main.info(`[ExtMarketplace] Downloading: ${downloadUrl}`);
+      tempFile = await downloadFile(downloadUrl);
+    }
 
     // 2. Verify checksum
     if (expectedChecksum) {
@@ -291,8 +355,8 @@ async function installFromUrl(
 
     return { success: false, error: errorMsg };
   } finally {
-    // Clean up temp file
-    if (tempFile) {
+    // Clean up temp file (never the bundled source).
+    if (tempFile && cleanupTemp) {
       try {
         await fs.unlink(tempFile);
       } catch {

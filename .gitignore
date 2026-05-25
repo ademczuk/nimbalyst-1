@@ -212,3 +212,12 @@ packages/android/app/google-services.json
 # Generated bundle / packaged extension artifact
 packages/electron/index.js
 packages/browser-extension/nimbalyst-web-clipper.zip
+
+# Local runtime testing/memory artifacts
+memories.db
+packages/electron/memories.db
+data/
+packages/electron/data/
+.rag-cache/
+delegation-log.txt
+test_kcs.mjs

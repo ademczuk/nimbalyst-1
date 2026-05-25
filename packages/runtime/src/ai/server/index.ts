@@ -1,6 +1,8 @@
 export * from './types';
 export * from './AIProvider';
 export * from './ProviderFactory';
+export * from './ProviderRegistry';
+export * from './registerBuiltinProviderMetadata';
 export * from './ModelRegistry';
 export * from './SessionManager';
 export * from './providers/ClaudeProvider';
@@ -12,5 +14,6 @@ export * from './providers/ProviderPermissionMixin';
 export * from './providers/LMStudioProvider';
 export * from './providers/OpenCodeProvider';
 export * from './providers/CopilotCLIProvider';
+export * from './providers/GeminiCLIProvider';
 export * from './utils/errorDetection';
 export * from './preferredAgentLanguageConfig';

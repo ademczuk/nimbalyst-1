@@ -89,6 +89,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('agent-new-session', callback);
     return () => ipcRenderer.removeListener('agent-new-session', callback);
   },
+  // 2026-05-18: Fired by the control plane (controlRoutes.ts) when a
+  // session is created from outside the renderer (e.g. via the
+  // nimbalyst-mcp sidecar). Renderer responds by re-running
+  // refreshSessionListAtom so the new session appears in the sidebar
+  // without forcing a full webContents.reload (preserves transcript
+  // scroll position, composer text, expanded panes).
+  onSessionsInvalidate: (callback: (data: { reason?: string; sessionId?: string; workspaceId?: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sessions:invalidate', handler);
+    return () => ipcRenderer.removeListener('sessions:invalidate', handler);
+  },
   onFileOpen: (callback: () => void) => {
     ipcRenderer.on('file-open', callback);
     return () => ipcRenderer.removeListener('file-open', callback);
@@ -476,7 +487,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI operations (new unified interface)
   aiHasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
   aiInitialize: (provider?: string, apiKey?: string) => ipcRenderer.invoke('ai:initialize', provider, apiKey),
-  aiCreateSession: (provider: 'claude' | 'claude-code' | 'openai' | 'openai-codex' | 'opencode' | 'copilot-cli' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) => {
+  aiCreateSession: (provider: string, documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) => {
     // console.log('[Preload] aiCreateSession called:', { provider, workspacePath, sessionType, worktreeId });
     return ipcRenderer.invoke('ai:createSession', provider, documentContext, workspacePath, modelId, sessionType, worktreeId);
   },
@@ -492,7 +503,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiDeleteSession: (sessionId: string, workspacePath?: string) => ipcRenderer.invoke('ai:deleteSession', sessionId, workspacePath),
   getAISettings: () => ipcRenderer.invoke('ai:getSettings'),
   saveAISettings: (settings: any) => ipcRenderer.invoke('ai:saveSettings', settings),
-  testAIConnection: (provider: 'claude' | 'claude-code' | 'openai' | 'lmstudio') => ipcRenderer.invoke('ai:testConnection', provider),
+  testAIConnection: (provider: string) => ipcRenderer.invoke('ai:testConnection', provider),
+  aiGetGeminiOAuthStatus: () => ipcRenderer.invoke('ai:getGeminiOAuthStatus'),
   getAIModels: () => ipcRenderer.invoke('ai:getModels'),
   // Aliases for consistency with component naming
   aiGetSettings: () => ipcRenderer.invoke('ai:getSettings'),
@@ -650,7 +662,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ai: {
     hasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
     initialize: (provider?: string, apiKey?: string) => ipcRenderer.invoke('ai:initialize', provider, apiKey),
-    createSession: (provider: 'claude' | 'claude-code' | 'openai' | 'openai-codex' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) =>
+    createSession: (provider: string, documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) =>
       ipcRenderer.invoke('ai:createSession', provider, documentContext, workspacePath, modelId, sessionType, worktreeId),
     sendMessage: (message: string, documentContext?: any, sessionId?: string, workspacePath?: string) =>
       ipcRenderer.invoke('ai:sendMessage', message, documentContext, sessionId, workspacePath),
@@ -666,6 +678,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('ai:getSettings'),
     saveSettings: (settings: any) => ipcRenderer.invoke('ai:saveSettings', settings),
     testConnection: (provider: string) => ipcRenderer.invoke('ai:testConnection', provider),
+    getGeminiOAuthStatus: () => ipcRenderer.invoke('ai:getGeminiOAuthStatus'),
     getModels: () => ipcRenderer.invoke('ai:getModels'),
 
     // Session Manager specific methods
@@ -1296,7 +1309,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('terminal:create-session', { workspacePath, ...options }),
   },
 
-  // Generic IPC methods for services that need them
+  // Generic IPC methods for services that need them.
+  // NOTE: the extension streaming spawn bridge (extension:spawn / :write / :kill
+  // request channels and extension:spawn:stdout / :stderr / :exit event channels)
+  // rides these generic invoke + on passthroughs - the event payloads carry a
+  // handleId the renderer filters on. No dedicated typed wrappers are required.
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
   send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),
   on: (channel: string, callback: (...args: any[]) => void) => {

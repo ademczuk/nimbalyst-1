@@ -13,6 +13,7 @@ import { OpenAIPanel } from '../GlobalSettings/panels/OpenAIPanel';
 import { OpenAICodexPanel } from '../GlobalSettings/panels/OpenAICodexPanel';
 import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
+import { GeminiPanel } from '../GlobalSettings/panels/GeminiPanel';
 import { LMStudioPanel } from '../GlobalSettings/panels/LMStudioPanel';
 import { AntigravityPanel } from '../GlobalSettings/panels/AntigravityPanel';
 import { AdvancedPanel } from '../GlobalSettings/panels/AdvancedPanel';
@@ -240,7 +241,7 @@ export function SettingsView({
   };
 
   const handleProviderToggle = async (provider: string, enabled: boolean) => {
-    if (enabled && (provider === 'claude-code' || provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli')) {
+    if (enabled && (provider === 'claude-code' || provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli')) {
       await fetchModels(provider);
     }
 
@@ -256,12 +257,12 @@ export function SettingsView({
 
       posthog?.capture('ai_provider_configured', {
         provider,
-        modelCount: (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli') ? 0 : models.length,
+        modelCount: (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli') ? 0 : models.length,
         action: enabled ? 'enabled' : 'disabled'
       });
 
       // OpenAI Codex and OpenCode use dynamic model discovery, not user selection
-      if (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli') {
+      if (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli') {
         const currentProvider = prev[provider] || { enabled: false };
         return {
           ...prev,
@@ -283,7 +284,7 @@ export function SettingsView({
     });
     debouncedSave();
 
-    if (enabled && provider !== 'claude-code' && provider !== 'openai-codex' && provider !== 'opencode' && provider !== 'copilot-cli') {
+    if (enabled && provider !== 'claude-code' && provider !== 'openai-codex' && provider !== 'opencode' && provider !== 'copilot-cli' && provider !== 'gemini-cli') {
       fetchModels(provider);
     }
   };
@@ -407,7 +408,7 @@ export function SettingsView({
       onApiKeyChange: handleApiKeyChange,
       onModelToggle: (modelId: string, enabled: boolean) => {
         // OpenAI Codex, OpenCode, and Copilot don't support user model selection - models are discovered dynamically
-        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli') {
+        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli' || selectedCategory === 'gemini-cli') {
           return;
         }
 
@@ -434,7 +435,7 @@ export function SettingsView({
       },
       onSelectAllModels: (selectAll: boolean) => {
         // OpenAI Codex, OpenCode, and Copilot don't support user model selection - models are discovered dynamically
-        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli') {
+        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli' || selectedCategory === 'gemini-cli') {
           return;
         }
 
@@ -543,6 +544,8 @@ export function SettingsView({
         return wrapWithOverride('opencode', 'OpenCode', <OpenCodePanel {...commonProps} />);
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
+      case 'gemini-cli':
+        return wrapWithOverride('gemini-cli', 'Google Gemini', <GeminiPanel {...commonProps} />);
       case 'lmstudio':
         return wrapWithOverride('lmstudio', 'LM Studio', <LMStudioPanel {...commonProps} />);
       case 'antigravity-gemini':

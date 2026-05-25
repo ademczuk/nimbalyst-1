@@ -12,6 +12,7 @@ import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import {
   OpenAICodexProvider,
+  ProviderRegistry,
   type AIProvider,
 } from '@nimbalyst/runtime/ai/server';
 import {
@@ -275,7 +276,11 @@ export function extractModelForProvider(
     return null;
   }
 
-  if ((AI_PROVIDER_TYPES as readonly string[]).includes(fullModel.toLowerCase())) {
+  // Treat the value as a bare provider name (not a model id) when it matches a
+  // registered provider or one of the built-in types. The registry check lets
+  // extension-contributed provider ids be recognized here too.
+  const lowerFullModel = fullModel.toLowerCase();
+  if (ProviderRegistry.has(lowerFullModel) || (AI_PROVIDER_TYPES as readonly string[]).includes(lowerFullModel)) {
     logger.main.warn(`[AIService] Model "${fullModel}" is just a provider name, not a valid model ID - using default model`);
     return null;
   }
