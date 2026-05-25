@@ -108,11 +108,14 @@ import { registerClaudeUsageHandlers } from './ipc/ClaudeUsageHandlers';
 import { claudeUsageService } from './services/ClaudeUsageService';
 import { registerCodexUsageHandlers } from './ipc/CodexUsageHandlers';
 import { codexUsageService } from './services/CodexUsageService';
+import { registerGeminiUsageHandlers } from './ipc/GeminiUsageHandlers';
+import { getGeminiUsageService } from './services/GeminiUsageService';
 import { registerExtensionHandlers, getClaudePluginPaths, initializeExtensionFileTypes } from './ipc/ExtensionHandlers';
+import { registerExtensionProviderHandlers } from './ipc/ExtensionProviderHandlers';
 import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
-import { ClaudeCodeProvider, OpenAICodexProvider, OpenAICodexACPProvider, OpenCodeProvider, CopilotCLIProvider } from '@nimbalyst/runtime/ai/server';
+import { ClaudeCodeProvider, OpenAICodexProvider, OpenAICodexACPProvider, OpenCodeProvider, CopilotCLIProvider, GeminiCLIProvider } from '@nimbalyst/runtime/ai/server';
 import { matchesAllowPattern } from '@nimbalyst/runtime/ai/server/permissions/toolPermissionHelpers';
 import { sessionFileTracker } from './services/SessionFileTracker';
 import { historyManager } from './HistoryManager';
@@ -326,6 +329,14 @@ function checkClaudeCodeInstallationOnFirstLaunch(): void {
 
 // AI service instance
 let aiService: AIService | null = null;
+
+// 2026-05-18: exposed for controlRoutes.ts so external automation can
+// dispatch sessions through the canonical streamingHandler path without
+// requiring the renderer to have the session open. Returns null during
+// startup before the service is constructed; callers must handle.
+export function getAIServiceForControlPlane(): AIService | null {
+  return aiService;
+}
 let runtimeSessionStore: SessionStore | null = null;
 let mcpHttpServer: any = null;
 let mcpConfigService: MCPConfigService | null = null;
@@ -1125,6 +1136,8 @@ app.whenReady().then(async () => {
     claudeUsageService.initialize();
     registerCodexUsageHandlers();
     codexUsageService.initialize();
+    registerGeminiUsageHandlers();
+    getGeminiUsageService().initialize();
     registerPermissionHandlers();
     registerGitStatusHandlers();
     registerGitHandlers();
@@ -1271,6 +1284,28 @@ app.whenReady().then(async () => {
         }
         return enabledServers;
     });
+    GeminiCLIProvider.setMCPConfigLoader(async (workspacePath?: string) => {
+        if (!mcpConfigService) {
+            throw new Error('MCP config service not initialized');
+        }
+        const mergedConfig = await mcpConfigService.getMergedConfig(workspacePath);
+        const allServers = mergedConfig.mcpServers || {};
+
+        const enabledServers: Record<string, any> = {};
+        for (const [name, config] of Object.entries(allServers)) {
+            if (isMCPServerEnabledForProvider(config as MCPServerConfig, MCP_PROVIDER_IDS.GEMINI)) {
+                const isAuthorized = await mcpConfigService.isOAuthAuthorized(config as MCPServerConfig, {
+                    useMcpRemoteForNativeOAuth: true,
+                });
+                if (!isAuthorized) {
+                    logger.mcp.info(`[MCP] Skipping unauthorized OAuth server for Gemini: ${name}`);
+                    continue;
+                }
+                enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
+            }
+        }
+        return enabledServers;
+    });
 
     // Inject extension plugins loader into ClaudeCodeProvider
     // This allows extensions to provide Claude SDK plugins with custom commands/agents
@@ -1344,6 +1379,7 @@ app.whenReady().then(async () => {
     OpenAICodexACPProvider.setShellEnvironmentLoader(() => getShellEnvironment());
     OpenCodeProvider.setShellEnvironmentLoader(() => getShellEnvironment());
     CopilotCLIProvider.setShellEnvironmentLoader(() => getShellEnvironment());
+    GeminiCLIProvider.setShellEnvironmentLoader(() => getShellEnvironment());
 
     // Inject enhanced PATH loader so agents can access system tools
     // (docker, homebrew, nvm, etc.) that are missing from Electron's GUI PATH.
@@ -1355,6 +1391,7 @@ app.whenReady().then(async () => {
     OpenAICodexACPProvider.setEnhancedPathLoader(() => getEnhancedPath());
     OpenCodeProvider.setEnhancedPathLoader(() => getEnhancedPath());
     CopilotCLIProvider.setEnhancedPathLoader(() => getEnhancedPath());
+    GeminiCLIProvider.setEnhancedPathLoader(() => getEnhancedPath());
 
     // Inject opencode.json loader so OpenCodeProvider.getModels() can surface
     // user-configured providers (e.g. an LM Studio bridge) in the model picker.
@@ -1558,6 +1595,7 @@ app.whenReady().then(async () => {
     registerMockupHandlers();
     registerDataModelHandlers();
     registerExtensionHandlers();
+    registerExtensionProviderHandlers();
     registerExtensionMarketplaceHandlers();
     registerOffscreenEditorHandlers();
 
@@ -1603,6 +1641,7 @@ app.whenReady().then(async () => {
     OpenAICodexACPProvider.setMcpAuthToken(mcpAuthToken);
     OpenCodeProvider.setMcpAuthToken(mcpAuthToken);
     CopilotCLIProvider.setMcpAuthToken(mcpAuthToken);
+    GeminiCLIProvider.setMcpAuthToken(mcpAuthToken);
 
     // Test-only IPC handler: lets E2E tests verify the bearer token is
     // enforced by the MCP servers. Mirrors the pattern used for
@@ -1628,6 +1667,8 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setMcpServerPort(result.port);
         OpenCodeProvider.setMcpServerPort(result.port);
         CopilotCLIProvider.setMcpServerPort(result.port);
+        GeminiCLIProvider.setMcpServerPort(result.port);
+
     } catch (error) {
             logger.mcp.error('Failed to start MCP SSE server:', error);
     }
@@ -1661,6 +1702,7 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setSessionContextServerPort(result.port);
         OpenCodeProvider.setSessionContextServerPort(result.port);
         CopilotCLIProvider.setSessionContextServerPort(result.port);
+        GeminiCLIProvider.setSessionContextServerPort(result.port);
     } catch (error) {
         logger.mcp.error('Failed to start session context MCP server:', error);
     }
@@ -2403,6 +2445,7 @@ app.on('before-quit', async (event) => {
         OpenAICodexACPProvider.setSessionContextServerPort(null);
         OpenCodeProvider.setSessionContextServerPort(null);
         CopilotCLIProvider.setSessionContextServerPort(null);
+        GeminiCLIProvider.setSessionContextServerPort(null);
         console.log('[QUIT] Session context MCP server shutdown complete');
     } catch (error) {
         console.error('[QUIT] Error closing session context MCP server:', error);

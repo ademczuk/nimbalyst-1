@@ -6,6 +6,12 @@
  */
 
 import type { PanelHost, PanelAIContext, ExtensionStorage, ExtensionFileStorage, ExecOptions, ExecResult } from '@nimbalyst/runtime';
+// SpawnOptions / ExtensionSpawnHandle are imported straight from the SDK: the
+// runtime barrel (runtime/src/extensions/index.ts) re-exports panel types via an
+// explicit named list owned by the extension-api workstream, so we avoid editing
+// that guarded file. Both types reach the package root via `export *` in
+// extension-sdk/src/types/index.ts.
+import type { SpawnOptions, ExtensionSpawnHandle } from '@nimbalyst/extension-sdk';
 import { ExtensionFileStorageImpl } from './ExtensionFileStorageImpl';
 
 // ============================================================================
@@ -187,6 +193,63 @@ class PanelHostImpl implements PanelHost {
         exitCode: -1,
       };
     }
+  }
+
+  async spawn(command: string, args?: string[], options?: SpawnOptions): Promise<ExtensionSpawnHandle> {
+    const result = await window.electronAPI.invoke('extension:spawn', {
+      extensionId: this.extensionId,
+      command,
+      args: args ?? [],
+      options: { cwd: options?.cwd ?? this.workspacePath, env: options?.env },
+    }) as { success: boolean; handleId?: string; error?: string };
+
+    if (!result?.success || !result.handleId) {
+      throw new Error(result?.error || `Failed to spawn ${command}`);
+    }
+
+    const handleId = result.handleId;
+    const localCleanups: Array<() => void> = [];
+
+    // Subscribe to a spawn event, filtering by this handle's id. The generic
+    // electronAPI.on passthrough forwards the payload and returns an unsubscribe.
+    const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => {
+      const unsub = window.electronAPI.on(channel, (payload: { handleId?: string } & T) => {
+        if (!payload || payload.handleId !== handleId) return;
+        cb(payload);
+      });
+      localCleanups.push(unsub);
+      // Track on the host so dispose() tears down stragglers if the panel closes
+      // without the extension unsubscribing.
+      this.eventCleanups.push(unsub);
+      return () => {
+        unsub();
+        this.eventCleanups = this.eventCleanups.filter((c) => c !== unsub);
+        const i = localCleanups.indexOf(unsub);
+        if (i >= 0) localCleanups.splice(i, 1);
+      };
+    };
+
+    const handle: ExtensionSpawnHandle = {
+      handleId,
+      write: async (data: string) => {
+        await window.electronAPI.invoke('extension:spawn:write', { handleId, data });
+      },
+      kill: async () => {
+        await window.electronAPI.invoke('extension:spawn:kill', { handleId });
+      },
+      onStdout: (callback: (data: string) => void) =>
+        subscribe<{ data: string }>('extension:spawn:stdout', (p) => callback(p.data)),
+      onStderr: (callback: (data: string) => void) =>
+        subscribe<{ data: string }>('extension:spawn:stderr', (p) => callback(p.data)),
+      onExit: (callback: (info: { code: number | null; signal: string | null }) => void) =>
+        subscribe<{ code: number | null; signal: string | null }>('extension:spawn:exit', (p) => {
+          callback({ code: p.code ?? null, signal: p.signal ?? null });
+          // Process is gone; drop this handle's listeners.
+          for (const c of [...localCleanups]) c();
+        }),
+    };
+
+    return handle;
   }
 
   /**

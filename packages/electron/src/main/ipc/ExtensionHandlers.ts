@@ -34,6 +34,21 @@ import {
 import { registerFileExtension, clearRegisteredExtensions } from '../extensions/RegisteredFileTypes';
 import type { ReleaseChannel } from '../utils/store';
 import { buildExtensionFindFilesPlan } from './extensionFindFilesPlan';
+import { getEnhancedPath } from '../services/CLIManager';
+import type { ChildProcess } from 'child_process';
+
+/**
+ * Tracks live child processes spawned via the extension:spawn streaming bridge.
+ * Keyed by a generated handleId. senderId binds the handle to the renderer
+ * (webContents.id) that created it, so write/kill can only touch their own
+ * processes. Lazily initialized inside registerExtensionHandlers.
+ */
+interface SpawnedProcessEntry {
+  child: ChildProcess;
+  extensionId: string;
+  senderId: number;
+}
+let spawnedProcesses: Map<string, SpawnedProcessEntry> | undefined;
 
 /**
  * Check if an extension should be visible for the current release channel.
@@ -206,6 +221,48 @@ export async function getAllExtensionDirectories(): Promise<string[]> {
   }
 
   return dirs;
+}
+
+/**
+ * Look up an installed extension's manifest by its declared id, scanning all
+ * extension directories (user + built-in). Returns the parsed manifest, or
+ * null if no installed extension declares that id.
+ *
+ * NOTE: the id is supplied by the renderer and is therefore spoofable. This
+ * lookup at least guarantees the spawn/exec only proceeds for an id that maps
+ * to a real installed manifest carrying the required permission. Binding the
+ * sender's webContents to a specific extension is a larger change owned by the
+ * extension-loader; tracked as a TODO at the spawn handler.
+ */
+async function findExtensionManifestById(extensionId: string): Promise<Record<string, unknown> | null> {
+  const extensionDirs = await getAllExtensionDirectories();
+  for (const extDir of extensionDirs) {
+    let subdirs;
+    try {
+      subdirs = await fs.readdir(extDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const subdir of subdirs) {
+      let isDir = subdir.isDirectory();
+      if (!isDir && subdir.isSymbolicLink()) {
+        try {
+          const stat = await fs.stat(path.join(extDir, subdir.name));
+          isDir = stat.isDirectory();
+        } catch { continue; }
+      }
+      if (!isDir) continue;
+      const manifestPath = path.join(extDir, subdir.name, 'manifest.json');
+      try {
+        const manifestJson = await fs.readFile(manifestPath, 'utf-8');
+        const manifest = JSON.parse(manifestJson) as Record<string, unknown>;
+        if (manifest.id === extensionId) {
+          return manifest;
+        }
+      } catch { continue; }
+    }
+  }
+  return null;
 }
 
 /**
@@ -1189,6 +1246,160 @@ export function registerExtensionHandlers(): void {
         exitCode: err.code || 1,
       };
     }
+  });
+
+  // ============================================================================
+  // Extension Streaming Spawn Bridge (long-lived bidirectional child process)
+  //
+  // Unlike extension:exec (one-shot, buffered), this spawns a persistent process
+  // and streams stdout/stderr/exit back to the SENDER renderer over IPC, and
+  // accepts stdin writes. Needed for protocols that hold an open stdio channel
+  // (e.g. `gemini --acp`). Gated on the manifest `process` permission.
+  // ============================================================================
+
+  spawnedProcesses ??= new Map<string, SpawnedProcessEntry>();
+
+  // Spawn a long-lived child process on behalf of an extension (requires process permission)
+  safeHandle('extension:spawn', async (event, params: {
+    extensionId: string;
+    command: string;
+    args?: string[];
+    options?: { cwd?: string; env?: Record<string, string> };
+  }) => {
+    const { extensionId, command, args = [], options } = params;
+
+    // SECURITY: validate the (renderer-supplied, spoofable) extensionId against
+    // installed manifests and require the `process` permission before spawning.
+    // TODO: bind event.sender -> extensionId so the id cannot be spoofed by a
+    //   different panel; depends on the extension-loader sender registry.
+    const manifest = await findExtensionManifestById(extensionId);
+    if (!manifest) {
+      return { success: false, error: `Extension ${extensionId} not found` };
+    }
+    const permissions = manifest.permissions as { process?: boolean } | undefined;
+    if (!permissions?.process) {
+      return { success: false, error: `Extension ${extensionId} lacks process permission` };
+    }
+
+    const { spawn } = await import('child_process');
+
+    // On Windows, npm-installed CLIs resolve to a .cmd/.bat shim. Node 20.12.2+ /
+    // 22 refuse to spawn .cmd/.bat without a shell (CVE-2024-27980 mitigation), so
+    // run the bare command name through a shell with its dir prepended to PATH.
+    // Mirrors GeminiACPProtocol.ensureProcess.
+    // Build a string env merged with the app's enhanced PATH so npm-global CLIs
+    // (e.g. gemini) resolve even when the GUI process PATH is minimal. Extensions
+    // cannot see the enhanced PATH themselves, so the bridge supplies it.
+    const spawnEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') spawnEnv[k] = v;
+    }
+    if (options?.env) {
+      for (const [k, v] of Object.entries(options.env)) {
+        if (typeof v === 'string') spawnEnv[k] = v;
+      }
+    }
+    spawnEnv.PATH = getEnhancedPath() + path.delimiter + (spawnEnv.PATH ?? spawnEnv.Path ?? '');
+
+    const isWin = process.platform === 'win32';
+    const hasPathSeparator = command.includes('/') || command.includes('\\');
+    const isWinScript = isWin && /\.(cmd|bat)$/i.test(command);
+    let spawnCommand = command;
+    // On Windows, .cmd/.bat (CVE-2024-27980) and bare command names both need a
+    // shell so PATHEXT resolves e.g. `gemini` -> `gemini.cmd` against PATH.
+    let useShell = isWinScript || (isWin && !hasPathSeparator);
+    if (isWinScript) {
+      const dir = path.dirname(command);
+      spawnEnv.PATH = dir + path.delimiter + spawnEnv.PATH;
+      spawnCommand = path.basename(command);
+    }
+
+    const handleId = `spawn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    let child;
+    try {
+      child = spawn(spawnCommand, args, {
+        cwd: options?.cwd,
+        env: spawnEnv,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: useShell,
+        windowsHide: true,
+      });
+    } catch (spawnError: unknown) {
+      const msg = spawnError instanceof Error ? spawnError.message : String(spawnError);
+      return { success: false, error: `Failed to spawn: ${msg}` };
+    }
+
+    const sender = event.sender;
+    spawnedProcesses!.set(handleId, { child, extensionId, senderId: sender.id });
+
+    const sendToSender = (channel: string, payload: unknown) => {
+      // The renderer may have navigated/closed; guard against a destroyed sender.
+      if (!sender.isDestroyed()) {
+        sender.send(channel, payload);
+      }
+    };
+
+    child.stdout?.on('data', (data: Buffer) => {
+      sendToSender('extension:spawn:stdout', { handleId, data: data.toString() });
+    });
+    child.stderr?.on('data', (data: Buffer) => {
+      sendToSender('extension:spawn:stderr', { handleId, data: data.toString() });
+    });
+    child.on('error', (err: Error) => {
+      sendToSender('extension:spawn:stderr', { handleId, data: `[spawn error] ${err.message}\n` });
+    });
+    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+      sendToSender('extension:spawn:exit', { handleId, code, signal });
+      spawnedProcesses!.delete(handleId);
+    });
+
+    logger.main.info(`[ExtensionHandlers] Spawned process for ${extensionId}: ${command} (handle=${handleId})`);
+    return { success: true, handleId };
+  });
+
+  // Write to a spawned process's stdin
+  safeHandle('extension:spawn:write', async (event, params: { handleId: string; data: string }) => {
+    const { handleId, data } = params;
+    const entry = spawnedProcesses?.get(handleId);
+    if (!entry) {
+      return { success: false, error: `No spawned process for handle ${handleId}` };
+    }
+    // Only the renderer that created the handle may write to it.
+    if (entry.senderId !== event.sender.id) {
+      return { success: false, error: `Handle ${handleId} not owned by sender` };
+    }
+    if (!entry.child.stdin || entry.child.stdin.destroyed) {
+      return { success: false, error: `Process stdin not writable for handle ${handleId}` };
+    }
+    try {
+      entry.child.stdin.write(data);
+      return { success: true };
+    } catch (writeError: unknown) {
+      const msg = writeError instanceof Error ? writeError.message : String(writeError);
+      return { success: false, error: `Write failed: ${msg}` };
+    }
+  });
+
+  // Kill a spawned process and clean up its handle
+  safeHandle('extension:spawn:kill', async (event, params: { handleId: string }) => {
+    const { handleId } = params;
+    const entry = spawnedProcesses?.get(handleId);
+    if (!entry) {
+      // Already gone (e.g. exited). Treat as success for idempotent cleanup.
+      return { success: true };
+    }
+    if (entry.senderId !== event.sender.id) {
+      return { success: false, error: `Handle ${handleId} not owned by sender` };
+    }
+    try {
+      entry.child.kill();
+    } catch (killError: unknown) {
+      const msg = killError instanceof Error ? killError.message : String(killError);
+      logger.main.warn(`[ExtensionHandlers] Failed to kill handle ${handleId}: ${msg}`);
+    }
+    spawnedProcesses!.delete(handleId);
+    return { success: true };
   });
 
   // ============================================================================

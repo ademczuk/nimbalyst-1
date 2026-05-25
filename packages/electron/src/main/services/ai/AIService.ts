@@ -17,6 +17,7 @@ import {
   isSlashCommandCatalogProvider,
   ClaudeCodeProvider,
   OpenAICodexProvider,
+  ProviderRegistry,
 } from '@nimbalyst/runtime/ai/server';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { parseContextUsageMessage } from '@nimbalyst/runtime/ai/server/utils/contextUsage';
@@ -142,6 +143,45 @@ export class AIService {
 
   // Owns the streaming send-message lifecycle (extracted from setupIpcHandlers).
   private streamingHandler: MessageStreamingHandler;
+
+  /**
+   * 2026-05-18: public entrypoint for controlRoutes.ts (external automation).
+   *
+   * Mirrors the ai:sendMessage IPC handler at line 1756 but accepts an
+   * explicit workspacePath instead of resolving it from the calling
+   * window's state — the control plane has no renderer window so the
+   * usual `windowStates.get(event.sender.id)` lookup fails. We fake an
+   * IpcMainInvokeEvent whose sender.send is a no-op (the streaming
+   * chunks are routed to the renderer for live transcript updates;
+   * external callers don't need them — the provider writes all
+   * authoritative state back to ai_agent_messages so polling
+   * AgentMessagesRepository.list gives the same answer).
+   *
+   * Returns when the provider's sendMessage call resolves, which
+   * means the final message has been persisted. Callers can either
+   * await this (synchronous-from-their-perspective) or fire-and-forget
+   * and poll the transcript route.
+   */
+  async dispatchExternal(
+    prompt: string,
+    sessionId: string,
+    workspacePath: string,
+  ): Promise<{ content: string }> {
+    const fakeEvent = {
+      sender: {
+        id: -1,
+        send: () => { /* no-op: external caller doesn't consume stream */ },
+        isDestroyed: () => false,
+      },
+    } as unknown as Electron.IpcMainInvokeEvent;
+    return this.streamingHandler.handle(
+      fakeEvent,
+      prompt,
+      undefined,
+      sessionId,
+      workspacePath,
+    );
+  }
 
   constructor(sessionStore: SessionStore) {
     logger.main.info('[AIService] Constructor called');
@@ -1464,6 +1504,10 @@ export class AIService {
       const hasCodex = providerSettings['openai-codex']?.enabled === true;
       if (hasCodex) return true;
 
+      // Check Gemini CLI (uses its own OAuth, doesn't need API key in settings)
+      const hasGeminiCLI = providerSettings['gemini-cli']?.enabled === true;
+      if (hasGeminiCLI) return true;
+
       // Check LM Studio (doesn't need API key but needs enabled models)
       const hasLMStudio = providerSettings['lmstudio']?.enabled === true &&
                          providerSettings['lmstudio']?.models?.length > 0;
@@ -1540,36 +1584,21 @@ export class AIService {
       // Get API key using project-aware helper (considers project overrides)
       let apiKey = this.getApiKeyForProvider(provider, workspacePath);
 
-      // Validate API key requirement based on provider
-      switch (provider) {
-        case 'claude':
-          if (!apiKey) {
-            throw new Error('Anthropic API key not configured');
-          }
-          break;
-        case 'claude-code':
-          // Claude Code: API key is optional, uses SSO login if not provided
-          // No error if missing - will use SSO login
-          break;
-        case 'openai':
-          if (!apiKey) {
-            throw new Error('OpenAI API key not configured');
-          }
-          break;
-        case 'openai-codex':
-          // Codex SDK uses its own auth (codex auth login), API key is optional
-          break;
-        case 'opencode':
-          // OpenCode uses its own config, API key is optional
-          break;
-        case 'copilot-cli':
-          // Copilot uses its own CLI auth (copilot auth login), no API key needed
-          break;
-        case 'lmstudio':
-          // LMStudio doesn't need an API key, just the base URL
-          break;
-        default:
-          throw new Error(`Unknown provider: ${provider}`);
+      // Validate API key requirement based on provider. The requirement comes
+      // from the provider registry so extension-contributed providers work
+      // without a hardcoded case. Unknown ids do not throw; only the
+      // key-required built-ins (claude, openai) error when the key is missing.
+      const validateDescriptor = ProviderRegistry.get(provider);
+      const validateRequiresApiKey = validateDescriptor
+        ? validateDescriptor.requiresApiKey
+        : provider === 'claude' || provider === 'openai';
+      if (validateRequiresApiKey && !apiKey) {
+        const keyErrorMessage = provider === 'claude'
+          ? 'Anthropic API key not configured'
+          : provider === 'openai'
+            ? 'OpenAI API key not configured'
+            : `API key not configured for provider ${provider}`;
+        throw new Error(keyErrorMessage);
       }
 
       // Get model details if specified
@@ -2579,6 +2608,7 @@ export class AIService {
       const showPromptAdditions = this.getSettingsStore().get('showPromptAdditions', false) as boolean;
       const showUsageIndicator = this.getSettingsStore().get('showUsageIndicator', true) as boolean;
       const showCodexUsageIndicator = this.getSettingsStore().get('showCodexUsageIndicator', true) as boolean;
+      const showGeminiUsageIndicator = this.getSettingsStore().get('showGeminiUsageIndicator', true) as boolean;
       const customClaudeCodePath = this.getSettingsStore().get('customClaudeCodePath', '') as string;
       const autoCommitEnabled = this.getSettingsStore().get('autoCommitEnabled', false) as boolean;
       const trackerAutomation = this.getSettingsStore().get('trackerAutomation', {
@@ -2602,6 +2632,7 @@ export class AIService {
         showPromptAdditions,
         showUsageIndicator,
         showCodexUsageIndicator,
+        showGeminiUsageIndicator,
         customClaudeCodePath,
         autoCommitEnabled,
         trackerAutomation,
@@ -2717,6 +2748,10 @@ export class AIService {
         this.getSettingsStore().set('showCodexUsageIndicator', settings.showCodexUsageIndicator);
       }
 
+      if (settings.showGeminiUsageIndicator !== undefined) {
+        this.getSettingsStore().set('showGeminiUsageIndicator', settings.showGeminiUsageIndicator);
+      }
+
       if (settings.customClaudeCodePath !== undefined) {
         this.getSettingsStore().set('customClaudeCodePath', settings.customClaudeCodePath);
       }
@@ -2782,6 +2817,10 @@ export class AIService {
           break;
         case 'copilot-cli':
           // Copilot uses its own CLI auth, no API key needed
+          apiKey = 'not-required';
+          break;
+        case 'gemini-cli':
+          // Gemini CLI uses its own OAuth, no API key needed
           apiKey = 'not-required';
           break;
         case 'lmstudio':
@@ -2877,6 +2916,45 @@ export class AIService {
             return {
               success: false,
               error: 'OpenCode CLI not found. Install it with: npm i -g opencode-ai',
+            };
+          }
+        }
+
+        // For Gemini CLI, verify the CLI is installed and the OAuth file exists
+        if (provider === 'gemini-cli') {
+          try {
+            const { execFileSync } = await import('child_process');
+            const { getEnhancedPath } = await import('../CLIManager');
+            const enhancedPath = getEnhancedPath();
+            const { GeminiCLIProvider } = await import('@nimbalyst/runtime/ai/server/providers/GeminiCLIProvider');
+            
+            const command = GeminiCLIProvider.resolveGeminiExecutableForRuntime(enhancedPath) || 'gemini';
+            
+            // Try executing --version to ensure the tool is installed and running
+            const version = execFileSync(command, ['--version'], {
+              encoding: 'utf8',
+              timeout: 5000,
+              env: { ...process.env, PATH: enhancedPath } as Record<string, string>,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+
+            const os = await import('os');
+            const path = await import('path');
+            const fs = await import('fs');
+            const credsPath = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+            
+            if (!fs.existsSync(credsPath)) {
+              return {
+                success: false,
+                error: 'Gemini CLI is installed but not authenticated. Please run `gemini` in your terminal and complete the OAuth login flow.',
+              };
+            }
+
+            return { success: true, provider, version };
+          } catch (err: any) {
+            return {
+              success: false,
+              error: 'Google Gemini CLI not found or failed to execute. Install it with: npm i -g @google/gemini-cli',
             };
           }
         }
@@ -3099,6 +3177,11 @@ export class AIService {
           // Copilot uses its own CLI auth (copilot auth login), no API key needed
           enabled: providerSettings['copilot-cli']?.enabled === true,
         },
+        'gemini-cli': {
+          // Gemini CLI uses its own OAuth (~/.gemini/oauth_creds.json), no API key needed
+          enabled: providerSettings['gemini-cli']?.enabled === true,
+          models: providerSettings['gemini-cli']?.models
+        },
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
           models: providerSettings['lmstudio']?.models
@@ -3182,6 +3265,52 @@ export class AIService {
     safeHandle('mcp:applyDiff:result', async (event, resultChannel: string, result: any) => {
       // Forward result back through the result channel
       safeSend(event, resultChannel, result);
+    });
+
+    safeHandle('ai:getGeminiOAuthStatus', async () => {
+      try {
+        const os = await import('os');
+        const path = await import('path');
+        const fs = await import('fs');
+
+        const credsPath = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+        if (!fs.existsSync(credsPath)) {
+          return { status: 'not-installed', email: '', name: '' };
+        }
+
+        const credsContent = fs.readFileSync(credsPath, 'utf8');
+        const creds = JSON.parse(credsContent);
+
+        if (!creds.id_token) {
+          return { status: 'not-installed', email: '', name: '' };
+        }
+
+        const parts = creds.id_token.split('.');
+        if (parts.length < 2) {
+          return { status: 'not-installed', email: '', name: '' };
+        }
+
+        const payloadB64 = parts[1];
+        const base64 = payloadB64.replace(/-/g, '+').replace(/_/g, '/');
+        const decodedPayload = Buffer.from(base64, 'base64').toString('utf8');
+        const payload = JSON.parse(decodedPayload);
+
+        const email = payload.email || '';
+        const name = payload.name || '';
+
+        const expiryDate = creds.expiry_date ? new Date(creds.expiry_date) : null;
+        const isExpired = expiryDate ? expiryDate.getTime() < Date.now() : false;
+
+        return {
+          status: isExpired ? 'expired' : 'installed',
+          email,
+          name,
+          expiryDate: creds.expiry_date,
+        };
+      } catch (error) {
+        console.error('[AIService] Error reading Gemini credentials:', error);
+        return { status: 'error', email: '', name: '', error: String(error) };
+      }
     });
 
     // ============================================================
@@ -3360,7 +3489,15 @@ export class AIService {
 
     // Extension SDK: List available chat models
     safeHandle('extensions:ai-list-models', async () => {
-      const CHAT_PROVIDERS: AIProviderType[] = ['claude', 'openai', 'lmstudio'];
+      // Chat providers come from the registry so extension-contributed chat
+      // providers are included. Falls back to the built-in trio if the registry
+      // isn't populated yet.
+      const registryChatProviders = ProviderRegistry.list()
+        .filter((d) => d.isChat)
+        .map((d) => d.id as AIProviderType);
+      const CHAT_PROVIDERS: AIProviderType[] = registryChatProviders.length > 0
+        ? registryChatProviders
+        : ['claude', 'openai', 'lmstudio'];
       const providerSettings = this.getNormalizedProviderSettings() as any;
       const globalApiKeys = this.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
 
@@ -3686,7 +3823,15 @@ export class AIService {
     event: Electron.IpcMainInvokeEvent,
     options: { model?: string; maxTokens?: number; temperature?: number; responseFormat?: any }
   ): Promise<{ provider: AIProvider; providerConfig: ProviderConfig; providerType: AIProviderType; syntheticSessionId: string }> {
-    const CHAT_PROVIDERS: AIProviderType[] = ['claude', 'openai', 'lmstudio'];
+    // Chat providers come from the registry so extension-contributed chat
+    // providers are usable here too. Falls back to the built-in trio if the
+    // registry isn't populated yet.
+    const registryChatProviders = ProviderRegistry.list()
+      .filter((d) => d.isChat)
+      .map((d) => d.id as AIProviderType);
+    const CHAT_PROVIDERS: AIProviderType[] = registryChatProviders.length > 0
+      ? registryChatProviders
+      : ['claude', 'openai', 'lmstudio'];
 
     // Determine provider from model ID or find first available
     let providerType: AIProviderType | undefined;

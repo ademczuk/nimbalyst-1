@@ -10,6 +10,7 @@
 import type { TranscriptWriter } from './TranscriptWriter';
 import type { ITranscriptEventStore, TranscriptEvent } from './types';
 import type { CanonicalEventDescriptor } from './parsers/IRawMessageParser';
+import { ProviderRegistry } from '../ProviderRegistry';
 
 function isActiveToolCallEvent(event: TranscriptEvent): boolean {
   const payload = event.payload as Record<string, unknown>;
@@ -194,7 +195,13 @@ export async function processDescriptor(
 export function selectRawParser(
   provider: string,
 ): 'codex' | 'codex-acp' | 'copilot' | 'claude-code' | 'opencode' {
-  if (provider === 'copilot-cli') {
+  // Registry-known (incl. extension) providers pick their declared parser;
+  // the hardcoded chain is the fallback when the registry is empty.
+  const fromRegistry = ProviderRegistry.get(provider)?.transcriptParser;
+  if (fromRegistry) {
+    return fromRegistry;
+  }
+  if (provider === 'copilot-cli' || provider === 'gemini-cli') {
     return 'copilot';
   }
   if (provider === 'openai-codex') {

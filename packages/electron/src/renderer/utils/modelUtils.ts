@@ -22,6 +22,7 @@ import {
   type ClaudeCodeVariant,
 } from '@nimbalyst/runtime/ai/modelConstants';
 import { CLAUDE_CODE_VARIANTS, ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 
 export { type EffortLevel, EFFORT_LEVELS, DEFAULT_EFFORT_LEVEL, parseEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
 
@@ -150,7 +151,10 @@ export function getProviderDisplayName(provider: string): string {
     case 'openai': return 'OpenAI';
     case 'lmstudio': return 'LMStudio';
     case 'copilot-cli': return 'GitHub Copilot';
-    default: return provider;
+    case 'gemini-cli': return 'Google Gemini';
+    // Registry covers built-ins not listed above and extension-contributed
+    // providers; raw id is the last resort.
+    default: return ProviderRegistry.get(provider)?.label ?? provider;
   }
 }
 
@@ -163,6 +167,7 @@ export function getProviderLabel(provider: string): string {
     case 'claude-code': return 'CODE';
     case 'openai': return 'GPT';
     case 'lmstudio': return 'LOCAL';
+    case 'gemini-cli': return 'GEMINI';
     default: return provider.toUpperCase();
   }
 }

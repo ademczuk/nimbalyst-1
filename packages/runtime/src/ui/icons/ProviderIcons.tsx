@@ -1,5 +1,6 @@
 import React from 'react';
 import { MaterialSymbol } from './MaterialSymbol';
+import { ProviderRegistry } from '../../ai/server/ProviderRegistry';
 
 interface IconProps {
   size?: number;
@@ -10,10 +11,13 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   'copilot-cli': 'terminal',
   // ACP transport reuses the OpenAI Codex icon (same underlying agent).
   'openai-codex-acp': 'openai-codex',
+  'gemini-cli': 'smart_toy',
 };
 
 export function resolveProviderIcon(provider: string): string {
-  return PROVIDER_ICON_MAP[provider] ?? provider;
+  // Registry first so extension-contributed providers can declare an icon;
+  // falls back to the built-in map, then the provider id itself.
+  return ProviderRegistry.get(provider)?.icon ?? PROVIDER_ICON_MAP[provider] ?? provider;
 }
 
 /**

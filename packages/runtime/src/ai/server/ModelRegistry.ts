@@ -1,90 +1,49 @@
 /**
- * Registry of available AI models with dynamic fetching
+ * Registry of available AI models with dynamic fetching.
+ *
+ * Provider dispatch is driven by the runtime ProviderRegistry (descriptors),
+ * not a hardcoded switch. Built-ins are registered idempotently on first use.
  */
 
-import { AIModel, AIProviderType, ModelIdentifier, assertExhaustiveProvider } from './types';
+import { AIModel, ModelIdentifier } from './types';
+import { ProviderRegistry } from './ProviderRegistry';
+import { registerBuiltinProviders } from './registerBuiltinProviders';
 
 export class ModelRegistry {
-  private static cachedModels: Map<AIProviderType, AIModel[]> = new Map();
-  private static lastFetch: Map<AIProviderType, number> = new Map();
+  private static cachedModels: Map<string, AIModel[]> = new Map();
+  private static lastFetch: Map<string, number> = new Map();
   private static CACHE_DURATION = 60 * 60 * 1000; // 1 hour cache
 
   /**
-   * Get models for a specific provider (with caching)
+   * Get models for a specific provider (always fetches fresh; cache kept for
+   * potential reuse but not currently consulted, matching prior behavior).
    */
   static async getModelsForProvider(
-    provider: AIProviderType,
+    provider: string,
     apiKey?: string,
     baseUrl?: string
   ): Promise<AIModel[]> {
-    // console.log('[ModelRegistry] getModelsForProvider called:', {
-    //   provider,
-    //   hasApiKey: !!apiKey,
-    //   baseUrl
-    // });
+    registerBuiltinProviders();
 
-    // SKIP CACHE FOR NOW - always fetch fresh
-    // const lastFetchTime = this.lastFetch.get(provider) || 0;
-    // const cached = this.cachedModels.get(provider);
-
-    // if (cached && Date.now() - lastFetchTime < this.CACHE_DURATION) {
-    //   return cached;
-    // }
-
-    // Fetch fresh models
     let models: AIModel[] = [];
-
     try {
-      switch (provider) {
-        case 'claude':
-          const { ClaudeProvider } = await import('./providers/ClaudeProvider');
-          models = this.filterLatestClaudeModels(ClaudeProvider.getModels());
-          // console.log('[ModelRegistry] Claude models:', models);
-          break;
-        case 'claude-code':
-          // Use SDK version with dynamic loading
-          // console.log('[ModelRegistry] Fetching claude-code models via ClaudeCodeProvider.getModels()');
-          const { ClaudeCodeProvider } = await import('./providers/ClaudeCodeProvider');
-          models = await ClaudeCodeProvider.getModels();
-          // console.log('[ModelRegistry] Claude Code models retrieved:', models.map(m => ({ id: m.id, name: m.name })));
-          break;
-        case 'openai':
-          const { OpenAIProvider } = await import('./providers/OpenAIProvider');
-          models = await OpenAIProvider.getModels(apiKey);
-          break;
-        case 'openai-codex':
-          const { OpenAICodexProvider } = await import('./providers/OpenAICodexProvider');
-          models = await OpenAICodexProvider.getModels(apiKey);
-          break;
-        case 'openai-codex-acp':
-          const { OpenAICodexACPProvider } = await import('./providers/OpenAICodexACPProvider');
-          models = await OpenAICodexACPProvider.getModels(apiKey);
-          break;
-        case 'opencode':
-          const { OpenCodeProvider } = await import('./providers/OpenCodeProvider');
-          models = await OpenCodeProvider.getModels();
-          break;
-        case 'lmstudio':
-          // Try to fetch models from LMStudio
-          // The provider will return empty array if LMStudio is not running
-          const { LMStudioProvider } = await import('./providers/LMStudioProvider');
-          models = await LMStudioProvider.getModels(baseUrl || 'http://127.0.0.1:1234');
-          break;
-        case 'copilot-cli':
-          const { CopilotCLIProvider } = await import('./providers/CopilotCLIProvider');
-          models = await CopilotCLIProvider.getModels();
-          break;
-        default:
-          assertExhaustiveProvider(provider);
+      const descriptor = ProviderRegistry.get(provider);
+      if (!descriptor || !descriptor.getModels) {
+        console.error(`Failed to fetch models for ${provider}: no model fetcher registered`);
+        return [];
       }
 
-      // Update cache
+      models = await descriptor.getModels(apiKey, baseUrl);
+
+      // Claude exposes many dated snapshots; keep only the latest per variant.
+      if (provider === 'claude') {
+        models = this.filterLatestClaudeModels(models);
+      }
+
       this.cachedModels.set(provider, models);
       this.lastFetch.set(provider, Date.now());
-
     } catch (error) {
       console.error(`Failed to fetch models for ${provider}:`, error);
-      // Return empty array on error
       models = [];
     }
 
@@ -92,29 +51,24 @@ export class ModelRegistry {
   }
 
   /**
-   * Get all available models across all providers.
-   * @param apiKeys - API keys and config (e.g., anthropic, openai, lmstudio_url)
-   * @param enabledProviders - Optional set of enabled provider types. If provided, only these providers are fetched.
+   * Get all available models across all registered providers.
+   * @param apiKeys - API keys and config (keyed by descriptor.apiKeyName / baseUrlName).
+   * @param enabledProviders - Optional set of enabled provider ids; if provided, only these are fetched.
    */
-  static async getAllModels(apiKeys: Record<string, string>, enabledProviders?: Set<AIProviderType>): Promise<AIModel[]> {
+  static async getAllModels(apiKeys: Record<string, string>, enabledProviders?: Set<string>): Promise<AIModel[]> {
+    registerBuiltinProviders();
+
     const allModels: AIModel[] = [];
-
-    const shouldFetch = (provider: AIProviderType) => !enabledProviders || enabledProviders.has(provider);
-
-    // Fetch from each enabled provider in parallel
     const promises: Promise<AIModel[]>[] = [];
 
-    if (shouldFetch('claude')) promises.push(this.getModelsForProvider('claude', apiKeys['anthropic']));
-    if (shouldFetch('claude-code')) promises.push(this.getModelsForProvider('claude-code'));
-    if (shouldFetch('openai')) promises.push(this.getModelsForProvider('openai', apiKeys['openai']));
-    if (shouldFetch('openai-codex')) promises.push(this.getModelsForProvider('openai-codex', apiKeys['openai']));
-    if (shouldFetch('openai-codex-acp')) promises.push(this.getModelsForProvider('openai-codex-acp', apiKeys['openai']));
-    if (shouldFetch('opencode')) promises.push(this.getModelsForProvider('opencode'));
-    if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', undefined, apiKeys['lmstudio_url']));
-    if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli'));
+    for (const descriptor of ProviderRegistry.list()) {
+      if (enabledProviders && !enabledProviders.has(descriptor.id)) continue;
+      const apiKey = descriptor.apiKeyName ? apiKeys[descriptor.apiKeyName] : undefined;
+      const baseUrl = descriptor.baseUrlName ? apiKeys[descriptor.baseUrlName] : undefined;
+      promises.push(this.getModelsForProvider(descriptor.id, apiKey, baseUrl));
+    }
 
     const results = await Promise.allSettled(promises);
-
     for (const result of results) {
       if (result.status === 'fulfilled') {
         allModels.push(...result.value);
@@ -125,43 +79,21 @@ export class ModelRegistry {
   }
 
   /**
-   * Get the default model for a provider
+   * Get the default model for a provider.
    */
-  static async getDefaultModel(provider: AIProviderType): Promise<string> {
-    switch (provider) {
-      case 'claude':
-        const { ClaudeProvider } = await import('./providers/ClaudeProvider');
-        return ClaudeProvider.getDefaultModel();
-      case 'openai':
-        const { OpenAIProvider } = await import('./providers/OpenAIProvider');
-        return OpenAIProvider.getDefaultModel();
-      case 'claude-code':
-        const { ClaudeCodeProvider } = await import('./providers/ClaudeCodeProvider');
-        return ClaudeCodeProvider.getDefaultModel();
-      case 'openai-codex':
-        const { OpenAICodexProvider } = await import('./providers/OpenAICodexProvider');
-        return OpenAICodexProvider.getDefaultModel();
-      case 'openai-codex-acp':
-        const { OpenAICodexACPProvider } = await import('./providers/OpenAICodexACPProvider');
-        return OpenAICodexACPProvider.getDefaultModel();
-      case 'opencode':
-        const { OpenCodeProvider: OCP } = await import('./providers/OpenCodeProvider');
-        return OCP.DEFAULT_MODEL;
-      case 'lmstudio':
-        const { LMStudioProvider } = await import('./providers/LMStudioProvider');
-        return LMStudioProvider.getDefaultModel();
-      case 'copilot-cli':
-        const { CopilotCLIProvider: CLP } = await import('./providers/CopilotCLIProvider');
-        return CLP.getDefaultModel();
-      default:
-        assertExhaustiveProvider(provider);
+  static async getDefaultModel(provider: string): Promise<string> {
+    registerBuiltinProviders();
+    const descriptor = ProviderRegistry.get(provider);
+    if (!descriptor || !descriptor.getDefaultModel) {
+      throw new Error(`Unknown provider: ${provider}`);
     }
+    return await descriptor.getDefaultModel();
   }
 
   /**
    * Clear the cache to force fresh fetch
    */
-  static clearCache(provider?: AIProviderType): void {
+  static clearCache(provider?: string): void {
     if (provider) {
       this.cachedModels.delete(provider);
       this.lastFetch.delete(provider);

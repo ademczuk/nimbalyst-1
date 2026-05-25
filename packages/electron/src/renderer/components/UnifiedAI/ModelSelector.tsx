@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
 import { isAgentProvider, shouldBlockStartedSessionProviderSwitch } from '@nimbalyst/runtime/ai/server/types';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
 import { providersAtom } from '../../store/atoms/appSettings';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
@@ -10,7 +11,7 @@ import { navigateToSettingsAtom } from '../../store/atoms/settingsNavigation';
 import type { SettingsCategory } from '../Settings/SettingsSidebar';
 import { AlphaBadge } from '../common/AlphaBadge';
 
-const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli']);
+const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli', 'gemini-cli']);
 
 interface Model {
   id: string;
@@ -130,6 +131,7 @@ export function ModelSelector({
       case 'opencode':
       case 'copilot-cli':
       case 'lmstudio':
+      case 'gemini-cli':
         return provider;
       case 'openai-codex-acp':
         // Settings still live under the OpenAI Codex panel.
@@ -175,12 +177,20 @@ export function ModelSelector({
       case 'opencode': return 'OpenCode';
       case 'copilot-cli': return 'GitHub Copilot';
       case 'lmstudio': return 'LMStudio';
-      default: return provider;
+      case 'gemini-cli': return 'Google Gemini';
+      // Built-ins above keep their picker-specific labels; the registry covers
+      // any other built-in/extension provider before falling back to raw id.
+      default: return ProviderRegistry.get(provider)?.label ?? provider;
     }
   };
 
+  // Prefer the registry; fall back to the runtime helper when metadata has not
+  // been registered yet so behavior is identical either way.
+  const providerIsAgent = (provider: string): boolean =>
+    ProviderRegistry.has(provider) ? ProviderRegistry.isAgent(provider) : isAgentProvider(provider);
+
   const getProviderType = (provider: string): ProviderType => {
-    return isAgentProvider(provider) ? 'agent' : 'model';
+    return providerIsAgent(provider) ? 'agent' : 'model';
   };
 
   const isProviderSwitchDisabled = (targetProvider: string): boolean => {
@@ -195,7 +205,7 @@ export function ModelSelector({
 
   // Group providers by type (agents vs models)
   const groupedProviders = Object.entries(models).reduce((acc, [provider, providerModels]) => {
-    const isAgent = isAgentProvider(provider);
+    const isAgent = providerIsAgent(provider);
     const type = isAgent ? 'agents' : 'models';
     if (!acc[type]) acc[type] = {};
     acc[type][provider] = providerModels;

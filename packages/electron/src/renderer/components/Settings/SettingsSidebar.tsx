@@ -12,6 +12,7 @@ export type SettingsCategory =
   | 'openai-codex'
   | 'opencode'
   | 'copilot-cli'
+  | 'gemini-cli'
   | 'lmstudio'
   | 'notifications'
   | 'voice-mode'

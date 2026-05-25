@@ -1,5 +1,21 @@
 // console.log('[RENDERER] index.tsx executing at', new Date().toISOString());
 
+// Forward uncaught renderer errors and unhandled promise rejections to
+// console.error so the main-process console-message handler writes them
+// into nimbalyst-debug.log. Without this, a renderer crash before React
+// mounts shows as a silent blank window with nothing logged.
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e: ErrorEvent) => {
+    const stack = e.error && e.error.stack ? e.error.stack : '';
+    console.error(`[RENDERER UNCAUGHT] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}\n${stack}`);
+  });
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const reason: any = e.reason;
+    const detail = reason && reason.stack ? reason.stack : String(reason);
+    console.error(`[RENDERER UNHANDLED PROMISE] ${detail}`);
+  });
+}
+
 // Check if this is the hidden capture window (used for flash-free offscreen screenshots).
 // The capture window loads the same renderer URL with ?mode=capture but skips all heavy
 // initialization (Monaco, PostHog, React, settings). It only sets up the offscreen editor
@@ -18,6 +34,7 @@ import {PostHogProvider} from "posthog-js/react";
 import { initMonacoEditor } from './utils/monacoConfig';
 import { store } from '@nimbalyst/runtime/store';
 import { registerLocalAssetUrlConverter } from '@nimbalyst/runtime';
+import { registerBuiltinProviderMetadata } from '@nimbalyst/runtime/ai/server/registerBuiltinProviderMetadata';
 import { nimAssetUrl } from './utils/assetUrl';
 import { initializeTheme } from './hooks/useTheme';
 import { offscreenEditorRenderer } from './services/OffscreenEditorRenderer';
@@ -51,6 +68,10 @@ import {
   codexUsageIndicatorEnabledAtom,
   initCodexUsageIndicatorSetting,
 } from './store/atoms/codexUsageAtoms';
+import {
+  geminiUsageIndicatorEnabledAtom,
+  initGeminiUsageIndicatorSetting,
+} from './store/atoms/geminiUsageAtoms';
 import { initVoiceModeListeners } from './store/listeners/voiceModeListeners';
 import {
   autoCommitEnabledAtom,
@@ -72,6 +93,11 @@ import {
 // blocks `<img src="file://...">`. Must register before any component
 // renders an image. Runs in both normal and capture mode.
 registerLocalAssetUrlConverter(nimAssetUrl);
+
+// Populate the renderer-side AI provider registry with light metadata for the
+// built-in providers. Must run before any component reads ProviderRegistry
+// (label/isAgent/mcpProviderId lookups). Idempotent and node-import-free.
+registerBuiltinProviderMetadata();
 
 // Initialize offscreen editor renderer and set up IPC listeners.
 // This runs in BOTH normal mode and capture mode.
@@ -155,6 +181,9 @@ await Promise.allSettled([
   }),
   initCodexUsageIndicatorSetting().then((enabled) => {
     store.set(codexUsageIndicatorEnabledAtom, enabled);
+  }),
+  initGeminiUsageIndicatorSetting().then((enabled) => {
+    store.set(geminiUsageIndicatorEnabledAtom, enabled);
   }),
   initAutoCommitSetting().then((enabled) => {
     store.set(autoCommitEnabledAtom, enabled);

@@ -3,6 +3,38 @@
   "generatedAt": "2026-04-21T17:42:59.236Z",
   "extensions": [
     {
+      "id": "gemini-cli",
+      "name": "Google Gemini (CLI)",
+      "description": "Google Gemini agent via the gemini CLI (ACP protocol, OAuth). Installs as a marketplace extension and registers the gemini-cli provider.",
+      "version": "1.0.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "ai-tools"
+      ],
+      "tags": [
+        "gemini",
+        "google",
+        "ai",
+        "agent",
+        "cli"
+      ],
+      "icon": "smart_toy",
+      "screenshots": [],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "process",
+        "network",
+        "filesystem"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "bundled:gemini-cli.nimext",
+      "checksum": "cc5cf1bc89bad6b81919f2706532840af1e0f68852bc9d4a7aa1635898c76925",
+      "repositoryUrl": "",
+      "changelog": "Initial release.",
+      "local": true
+    },
+    {
       "id": "com.developer.nimbalyst-mindmap",
       "name": "Nimbalyst Mindmap",
       "description": "A freeform spatial mindmap editor with AI-assisted editing",

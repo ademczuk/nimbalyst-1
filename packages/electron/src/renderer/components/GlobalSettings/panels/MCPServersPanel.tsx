@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePostHog } from 'posthog-js/react';
 import { useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 import { ErrorBoundary } from '../../ErrorBoundary';
 import { useTheme } from '../../../hooks/useTheme';
 import { enabledProvidersAtom } from '../../../store/atoms/appSettings';
@@ -32,19 +33,30 @@ interface MCPServerConfig {
 const MCP_PROVIDER_IDS = {
   CLAUDE_AGENT: 'claude-agent',
   CODEX: 'codex',
+  COPILOT: 'copilot',
+  GEMINI: 'gemini',
 } as const;
 
-const ALL_MCP_PROVIDER_IDS = [MCP_PROVIDER_IDS.CLAUDE_AGENT, MCP_PROVIDER_IDS.CODEX] as const;
+const ALL_MCP_PROVIDER_IDS = [
+  MCP_PROVIDER_IDS.CLAUDE_AGENT,
+  MCP_PROVIDER_IDS.CODEX,
+  MCP_PROVIDER_IDS.COPILOT,
+  MCP_PROVIDER_IDS.GEMINI,
+] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   'claude-agent': 'Claude',
   'codex': 'Codex',
+  'copilot': 'Copilot',
+  'gemini': 'Gemini',
 };
 
 /** Maps MCP provider IDs to app settings provider IDs */
 const MCP_TO_APP_PROVIDER: Record<string, string> = {
   'claude-agent': 'claude-code',
   'codex': 'openai-codex',
+  'copilot': 'copilot-cli',
+  'gemini': 'gemini-cli',
 };
 
 function getEffectiveProviders(config: MCPServerConfig): string[] {
@@ -647,13 +659,20 @@ function MCPServersPanelInner({ scope = 'user', workspacePath }: MCPServersPanel
   const isDark = theme === 'dark' || theme === 'crystal-dark';
   const appEnabledProviders = useAtomValue(enabledProvidersAtom);
 
-  // Only show MCP provider columns for providers that are enabled in app settings
+  // Only show MCP provider columns for providers that are enabled in app settings.
+  // Resolve the MCP-id -> app-provider mapping from the registry's mcpProviderId
+  // field, falling back to the hardcoded map when metadata isn't registered.
+  const mcpToAppProvider = useCallback((mcpId: string): string | undefined => {
+    const fromRegistry = ProviderRegistry.list().find((d) => d.mcpProviderId === mcpId);
+    return fromRegistry?.id ?? MCP_TO_APP_PROVIDER[mcpId];
+  }, []);
+
   const visibleMcpProviders = useMemo(() =>
     ALL_MCP_PROVIDER_IDS.filter((mcpId) => {
-      const appId = MCP_TO_APP_PROVIDER[mcpId];
+      const appId = mcpToAppProvider(mcpId);
       return appId ? appEnabledProviders.includes(appId) : true;
     }),
-    [appEnabledProviders],
+    [appEnabledProviders, mcpToAppProvider],
   );
 
   const [servers, setServers] = useState<MCPServerWithName[]>([]);

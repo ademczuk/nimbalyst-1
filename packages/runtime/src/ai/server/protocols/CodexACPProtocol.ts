@@ -436,14 +436,33 @@ export class CodexACPProtocol implements AgentProtocol {
 
   private async initializeConnection(): Promise<void> {
     this.processExitError = null;
-    const child = this.spawnProcess(this.command, this.args, {
+
+    // Windows: Node 20.12.2+/22 throw `spawn EINVAL` when spawning a `.cmd`/`.bat`
+    // shim by full path without `shell: true` (CVE-2024-27980 mitigation). npm-global
+    // CLIs (e.g. codex) resolve to `.cmd` shims on Windows. Quoting the full path
+    // under a shell also fails (cmd.exe mangles backslashes), so instead prepend the
+    // command's directory to PATH and spawn the basename under a shell. POSIX and
+    // non-script commands keep the original command/env with shell:false.
+    const isWinScript = process.platform === 'win32' && /\.(cmd|bat)$/i.test(this.command);
+    const baseEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') baseEnv[k] = v;
+    }
+    Object.assign(baseEnv, this.extraEnv, this.apiKey ? { OPENAI_API_KEY: this.apiKey } : {});
+
+    let command = this.command;
+    if (isWinScript) {
+      const dir = path.dirname(this.command);
+      baseEnv.PATH = dir + path.delimiter + (baseEnv.PATH ?? baseEnv.Path ?? '');
+      command = path.basename(this.command);
+    }
+
+    const child = this.spawnProcess(command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ...this.extraEnv,
-        ...(this.apiKey ? { OPENAI_API_KEY: this.apiKey } : {}),
-      },
+      env: baseEnv,
       cwd: process.cwd(),
+      shell: isWinScript,
+      windowsHide: true,
     });
 
     this.childProcess = child;

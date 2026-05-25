@@ -27,6 +27,7 @@ import type {
   ClaudePluginContribution,
   PanelContribution,
   SettingsPanelContribution,
+  AiProviderContribution,
   LoadedPanel,
   PanelHostProps,
   PanelGutterButtonProps,
@@ -1817,6 +1818,48 @@ export class ExtensionLoader {
     panels.sort((a, b) => (a.contribution.order ?? 100) - (b.contribution.order ?? 100));
 
     return panels;
+  }
+
+  /**
+   * Get all AI provider contributions from loaded extensions.
+   * Each entry pairs a manifest contribution with the matching provider
+   * implementation exported under `module.aiProviders[contribution.component]`.
+   * The host registers these into the runtime ProviderRegistry.
+   */
+  getAiProviders(): Array<{
+    extensionId: string;
+    contribution: AiProviderContribution;
+    impl: unknown;
+  }> {
+    const providers: Array<{
+      extensionId: string;
+      contribution: AiProviderContribution;
+      impl: unknown;
+    }> = [];
+
+    for (const loaded of this.loadedExtensions.values()) {
+      if (!loaded.enabled) continue;
+
+      const contributions = loaded.manifest.contributions?.aiProviders || [];
+      const providerExports = loaded.module.aiProviders || {};
+
+      for (const contribution of contributions) {
+        const impl = providerExports[contribution.component];
+        if (impl !== undefined) {
+          providers.push({
+            extensionId: loaded.manifest.id,
+            contribution,
+            impl,
+          });
+        } else {
+          console.warn(
+            `[ExtensionLoader] Extension ${loaded.manifest.id} declares AI provider '${contribution.id}' but does not export '${contribution.component}'`
+          );
+        }
+      }
+    }
+
+    return providers;
   }
 
   /**

@@ -20,6 +20,8 @@ import {
   setOffscreenMountCallback,
   setEnsureEditorCallback,
 } from '@nimbalyst/runtime';
+import { ProviderRegistry, type ProviderDescriptor } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
+import { initializeExtensionProviderTurnBridge } from './extensionProviderTurnBridge';
 import { ExtensionPlatformServiceImpl } from '../services/ExtensionPlatformServiceImpl';
 import { initializeExtensionEditorBridge } from '../extensions/ExtensionEditorBridge';
 import { initializeExtensionPluginBridge } from '../extensions/ExtensionPluginBridge';
@@ -622,6 +624,41 @@ export function setExtensionWorkspacePath(workspacePath: string | null): void {
 }
 
 /**
+ * Register extension-contributed AI providers into the runtime
+ * ProviderRegistry as metadata-only descriptors.
+ *
+ * This mirrors `registerBuiltinProviderMetadata()` for built-ins: it only
+ * registers the renderer-safe descriptor fields (label, icon, isAgent, etc.)
+ * so the provider shows up in model pickers and chat/agent allowlists. The
+ * heavy factories (createInstance/getModels) live in the main process and are
+ * wired by a separate stream; they are intentionally omitted here.
+ */
+export function initializeAiProviderBridge(): void {
+  const loader = getExtensionLoader();
+  for (const { contribution } of loader.getAiProviders()) {
+    const descriptor: ProviderDescriptor = {
+      id: contribution.id,
+      label: contribution.label,
+      source: 'extension',
+      icon: contribution.icon,
+      isAgent: contribution.isAgent ?? false,
+      isChat: contribution.isChat ?? false,
+      requiresApiKey: contribution.requiresApiKey ?? false,
+      dynamicModels: contribution.dynamicModels ?? false,
+      transcriptParser: contribution.transcriptParser ?? 'claude-code',
+      defaultModelId: contribution.defaultModelId ?? '',
+      mcpProviderId: contribution.mcpProviderId,
+    };
+    ProviderRegistry.register(descriptor);
+    // Mirror the descriptor into the MAIN process registry so the session loop
+    // (ProviderFactory.createProvider) can construct an ExtensionProviderProxy
+    // that delegates turns back here. Renderer registers metadata-only; main
+    // attaches the proxy factory.
+    void window.electronAPI.invoke('ext-provider:register', descriptor);
+  }
+}
+
+/**
  * Register the Extension System with its platform service.
  * Should be called once during app initialization.
  *
@@ -670,6 +707,14 @@ export async function registerExtensionSystem(): Promise<void> {
     // Initialize the theme bridge so extension-contributed themes propagate
     // to the main process for theme:list and active-theme reconciliation.
     initializeExtensionThemeBridge();
+
+    // Register extension-contributed AI providers as metadata-only descriptors
+    // so they appear in the renderer ProviderRegistry (model pickers, allowlists).
+    initializeAiProviderBridge();
+
+    // Wire the renderer half of the extension-provider turn bridge so the
+    // main-process proxy can delegate turns to renderer-resident impls.
+    initializeExtensionProviderTurnBridge();
 
     // Set up IPC listener for screenshot capture requests
     setupScreenshotIPCListener();

@@ -17,6 +17,7 @@ import * as path from 'path';
 import {
   ProviderFactory,
   ModelRegistry,
+  ProviderRegistry,
   isAgentProvider,
   onAgentMessageBatch,
   type AIProvider,
@@ -51,6 +52,7 @@ import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
+import { getGeminiUsageService } from '../GeminiUsageService';
 import {
   shouldShowCommunityPopup,
   markCommunityPopupShown,
@@ -421,42 +423,30 @@ export class MessageStreamingHandler {
       // Get the correct API key based on provider
       let apiKey: string | undefined;
       let errorMessage = 'API key not configured';
-      let requiresApiKey = true;
       const effectiveWorkspacePath = session.workspacePath || workspacePath;
       apiKey = this.svc.getApiKeyForProvider(session.provider, effectiveWorkspacePath);
-      switch (session.provider) {
-        case 'claude':
-          errorMessage = 'Anthropic API key not configured';
-          break;
-        case 'claude-code':
-          // Claude Code: API key is optional and uses OAuth login when not configured.
-          requiresApiKey = false;
-          break;
-        case 'openai':
-          errorMessage = 'OpenAI API key not configured';
-          break;
-        case 'openai-codex':
-          // Codex SDK uses its own auth (codex auth login), API key is optional
-          requiresApiKey = false;
-          break;
-        case 'openai-codex-acp':
-          // Codex ACP uses the codex-acp binary's own auth, API key is optional
-          requiresApiKey = false;
-          break;
-        case 'opencode':
-          // OpenCode uses its own config, API key is optional
-          requiresApiKey = false;
-          break;
-        case 'copilot-cli':
-          // Copilot uses its own CLI auth, no API key needed
-          requiresApiKey = false;
-          break;
-        case 'lmstudio':
-          // LMStudio doesn't need an API key, just the base URL
-          apiKey = 'not-required'; // Dummy value since LMStudio doesn't need a key
-          break;
-        default:
-          throw new Error(`Unknown provider: ${session.provider}`);
+
+      // Whether a key is required comes from the provider registry so that
+      // extension-contributed providers work without a hardcoded case. Unknown
+      // ids do not throw; they are treated as not requiring a key.
+      const providerDescriptor = ProviderRegistry.get(session.provider);
+      // Hardcoded fallback for the built-ins in case the registry isn't
+      // populated yet (only 'claude' and 'openai' require a key).
+      const requiresApiKey = providerDescriptor
+        ? providerDescriptor.requiresApiKey
+        : session.provider === 'claude' || session.provider === 'openai';
+
+      // Provider-specific error wording for the two key-required built-ins.
+      if (session.provider === 'claude') {
+        errorMessage = 'Anthropic API key not configured';
+      } else if (session.provider === 'openai') {
+        errorMessage = 'OpenAI API key not configured';
+      }
+
+      // LMStudio doesn't need an API key, just the base URL. Use a dummy value
+      // so the `!apiKey && requiresApiKey` guard below never fires for it.
+      if (session.provider === 'lmstudio') {
+        apiKey = 'not-required';
       }
 
       if (!apiKey && requiresApiKey) {
@@ -466,7 +456,7 @@ export class MessageStreamingHandler {
       // Create the provider
       if (isProviderClaudeCode) {
       }
-      provider = ProviderFactory.createProvider(session.provider, session.id);
+      provider = ProviderFactory.createProvider(session.provider as AIProviderType, session.id);
 
       if (isProviderClaudeCode) {
       }
@@ -1812,6 +1802,13 @@ export class MessageStreamingHandler {
 
             // Capture token usage if available
             const tokenUsage = chunk.usage;
+            // Feed cumulative Gemini token meter (Gemini has only per-turn counts).
+            if (session.provider === 'gemini-cli' && tokenUsage) {
+              getGeminiUsageService().record({
+                input_tokens: tokenUsage.input_tokens,
+                output_tokens: tokenUsage.output_tokens,
+              });
+            }
             // Capture modelUsage for claude-code provider (provides per-model breakdown with input/output tokens)
             const modelUsage = chunk.modelUsage;
             // Context fill from last assistant message (actual tokens in context window)

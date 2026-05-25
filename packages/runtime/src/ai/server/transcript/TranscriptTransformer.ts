@@ -28,6 +28,7 @@ import type {
   CanonicalEventDescriptor,
 } from './parsers/IRawMessageParser';
 import { processDescriptor as processDescriptorShared } from './processDescriptor';
+import { ProviderRegistry, type TranscriptParserKind } from '../ProviderRegistry';
 
 // ---------------------------------------------------------------------------
 // Dependencies (injected via interfaces)
@@ -384,7 +385,14 @@ export class TranscriptTransformer {
   // ---------------------------------------------------------------------------
 
   private createParser(provider: string): IRawMessageParser {
-    if (provider === 'copilot-cli') {
+    // Registry-known (incl. extension) providers select their parser by the
+    // declared transcriptParser kind; the hardcoded id chain below is the
+    // fallback when the registry is empty for this process.
+    const kind = ProviderRegistry.get(provider)?.transcriptParser;
+    if (kind) {
+      return TranscriptTransformer.parserForKind(kind);
+    }
+    if (provider === 'copilot-cli' || provider === 'gemini-cli') {
       return new CopilotRawParser();
     }
     if (provider === 'openai-codex') {
@@ -397,6 +405,21 @@ export class TranscriptTransformer {
       return new OpenCodeRawParser();
     }
     return new ClaudeCodeRawParser();
+  }
+
+  private static parserForKind(kind: TranscriptParserKind): IRawMessageParser {
+    switch (kind) {
+      case 'copilot':
+        return new CopilotRawParser();
+      case 'codex':
+        return new CodexRawParser();
+      case 'codex-acp':
+        return new CodexACPRawParser();
+      case 'opencode':
+        return new OpenCodeRawParser();
+      case 'claude-code':
+        return new ClaudeCodeRawParser();
+    }
   }
 
   // ---------------------------------------------------------------------------
