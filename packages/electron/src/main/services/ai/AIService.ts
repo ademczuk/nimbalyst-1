@@ -2827,6 +2827,10 @@ export class AIService {
           // LMStudio doesn't need an API key, just test the connection
           apiKey = 'not-required';
           break;
+        case 'antigravity-gemini':
+          // Antigravity rides the user's existing ~/.gemini login; no API key stored.
+          apiKey = 'not-required';
+          break;
         default:
           return { success: false, error: `Unknown provider: ${provider}` };
       }
@@ -2959,6 +2963,54 @@ export class AIService {
           }
         }
 
+        // For Antigravity (Gemini 3.5 Flash), verify the install + ~/.gemini login,
+        // then confirm the language server is reachable by fetching the model catalog.
+        // Auth rides the user's existing Antigravity/Google login; nimbalyst stores no
+        // key and never triggers a browser OAuth. This must run in the main process
+        // because AntigravityServerManager spawns/attaches to a child process.
+        if (provider === 'antigravity-gemini') {
+          const { AntigravityServerManager } = await import(
+            '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityServerManager'
+          );
+          if (!AntigravityServerManager.isInstalled()) {
+            return {
+              success: false,
+              error:
+                'Antigravity is not installed. Install the Antigravity IDE, then sign in ' +
+                'to enable Gemini 3.5 Flash.',
+            };
+          }
+          if (!AntigravityServerManager.hasGeminiAuth()) {
+            return {
+              success: false,
+              error:
+                'No Antigravity/Gemini login found in ~/.gemini. Open the Antigravity IDE ' +
+                'and sign in first (nimbalyst does not perform the OAuth browser flow).',
+            };
+          }
+          try {
+            const { AntigravityProvider } = await import(
+              '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityProvider'
+            );
+            const models = await AntigravityProvider.getModels();
+            if (!models || models.length === 0) {
+              return {
+                success: false,
+                error:
+                  'Antigravity is installed and authenticated, but no Gemini Flash models ' +
+                  'were returned. Make sure the Antigravity IDE is up to date.',
+              };
+            }
+            return { success: true, provider, models: models.length };
+          } catch (err: any) {
+            return {
+              success: false,
+              error:
+                `Could not reach the Antigravity language server: ${err?.message || String(err)}`,
+            };
+          }
+        }
+
         // For Claude providers, test the API connection
         if (provider === 'claude') {
           console.log('[AIService] testConnection - Testing provider:', provider);
@@ -3047,6 +3099,10 @@ export class AIService {
       if (providerSettings['openai-codex']?.enabled === true) enabledSet.add('openai-codex');
       if (providerSettings['opencode']?.enabled === true) enabledSet.add('opencode');
       if (providerSettings['lmstudio']?.enabled === true) enabledSet.add('lmstudio');
+      // antigravity-gemini auth rides ~/.gemini (no API key); fetch only when toggled on.
+      // Without this the Chat Providers settings panel shows "No models found" because
+      // getAllModels never asks the registry for the antigravity descriptor's models.
+      if (providerSettings['antigravity-gemini']?.enabled === true) enabledSet.add('antigravity-gemini');
 
       const modelsConfig = {
         ...apiKeys,
