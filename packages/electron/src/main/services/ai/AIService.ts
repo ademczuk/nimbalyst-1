@@ -438,9 +438,15 @@ export class AIService {
           },
           providerSettings: {
             type: 'object',
+            // All built-in providers default to enabled on fresh install.
+            // Per-provider auth/install/connection state is still surfaced in
+            // the panel; this only controls whether the entry appears in the
+            // model picker. Once the user has any persisted providerSettings,
+            // their values win -- this default is only consulted by
+            // electron-store on first run when the key is absent.
             default: {
               claude: {
-                enabled: false,
+                enabled: true,
                 testStatus: "idle",
               },
               'claude-code': {
@@ -450,18 +456,46 @@ export class AIService {
                 models: ["claude-code:opus", "claude-code:opus-4-6", "claude-code:sonnet", "claude-code:haiku"]
               },
               openai: {
-                enabled: false,
+                enabled: true,
                 testStatus: "idle",
               },
               'openai-codex': {
-                enabled: false,
+                enabled: true,
+                testStatus: "idle",
+                installStatus: "not-installed",
+              },
+              'openai-codex-acp': {
+                enabled: true,
+                testStatus: "idle",
+                installStatus: "not-installed",
+              },
+              opencode: {
+                enabled: true,
+                testStatus: "idle",
+                installStatus: "not-installed",
+              },
+              'copilot-cli': {
+                enabled: true,
+                testStatus: "idle",
+                installStatus: "not-installed",
+              },
+              'gemini-cli': {
+                enabled: true,
                 testStatus: "idle",
                 installStatus: "not-installed",
               },
               lmstudio: {
-                enabled: false,
+                enabled: true,
                 testStatus: "idle",
                 baseUrl: "http://127.0.0.1:8234"
+              },
+              'antigravity-gemini': {
+                enabled: true,
+                testStatus: "idle",
+              },
+              'antigravity-gemini-agent': {
+                enabled: true,
+                testStatus: "idle",
               }
             }
           },

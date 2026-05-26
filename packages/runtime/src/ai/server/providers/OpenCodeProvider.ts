@@ -218,15 +218,27 @@ export class OpenCodeProvider extends BaseAgentProvider {
       provider,
     }));
 
-    const config = await OpenCodeProvider.configLoader?.().catch(() => null);
+    // Discriminate between "file simply isn't there" (the normal case for any
+    // user who doesn't use OpenCode -- silent) and "file exists but failed to
+    // parse" (real misconfiguration -- warn). The injected loader contract is:
+    //   - returns null  -> file missing or empty (no signal to surface)
+    //   - throws        -> file present but unreadable or invalid JSON
+    // The previous .catch(() => null) collapsed both cases into a single
+    // unconditional warning, which fired on every boot for the majority of
+    // users. See #284.
+    let config: OpenCodeFileConfig | null = null;
+    let parseError: unknown = null;
+    try {
+      config = (await OpenCodeProvider.configLoader?.()) ?? null;
+    } catch (err) {
+      parseError = err;
+    }
     if (!config) {
-      // No file found or unreadable. Surface this in the log so the user can
-      // tell the difference between "I have no providers configured" and
-      // "Nimbalyst can't find the file you wrote". See #284.
-      if (OpenCodeProvider.configLoader) {
+      if (parseError && OpenCodeProvider.configLoader) {
         // eslint-disable-next-line no-console -- runtime package logger is renderer-only
         console.warn(
-          '[OpenCode] configLoader returned null. opencode.json was not found or could not be parsed. Configured providers will not appear in the model picker.'
+          '[OpenCode] opencode.json exists but could not be parsed. Configured providers will not appear in the model picker.',
+          parseError
         );
       }
       return presets;

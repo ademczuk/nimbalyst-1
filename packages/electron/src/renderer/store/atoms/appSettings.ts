@@ -1101,24 +1101,31 @@ registerBuiltinProviderMetadata();
  * defaults are then merged on top so any provider id present in the registry
  * (including extension-contributed ones) but missing here gets a sane default.
  */
+// All built-in providers default to enabled on fresh install. Per-provider
+// auth, install, or connection state is still surfaced in the panel -- this
+// only controls whether the provider entry appears in the model picker.
+// IMPORTANT: persisted user settings are merged ON TOP of these defaults by
+// initAIProviderSettings(), so flipping a default from false to true does
+// NOT overwrite a user's existing stored choice (their stored `enabled: false`
+// still wins on the next load).
 const defaultProviders: Record<string, ProviderConfig> = {
-  claude: { enabled: false, testStatus: 'idle' },
+  claude: { enabled: true, testStatus: 'idle' },
   'claude-code': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
-  openai: { enabled: false, testStatus: 'idle' },
-  'openai-codex': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  'openai-codex-acp': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  opencode: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  'copilot-cli': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
+  openai: { enabled: true, testStatus: 'idle' },
+  'openai-codex': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  'openai-codex-acp': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  opencode: { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  'copilot-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  lmstudio: { enabled: true, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
   // Antigravity-backed Gemini (chat provider). Auth rides ~/.gemini; no API key.
-  'antigravity-gemini': { enabled: false, testStatus: 'idle' },
+  'antigravity-gemini': { enabled: true, testStatus: 'idle' },
   // Antigravity-backed Gemini (agent provider - tool-loop over GetModelResponse).
-  'antigravity-gemini-agent': { enabled: false, testStatus: 'idle' },
+  'antigravity-gemini-agent': { enabled: true, testStatus: 'idle' },
 };
 
 for (const descriptor of ProviderRegistry.list()) {
   if (!defaultProviders[descriptor.id]) {
-    defaultProviders[descriptor.id] = { enabled: false, testStatus: 'idle', installStatus: 'not-installed' };
+    defaultProviders[descriptor.id] = { enabled: true, testStatus: 'idle', installStatus: 'not-installed' };
   }
 }
 
