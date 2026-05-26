@@ -1116,6 +1116,11 @@ const defaultProviders: Record<string, ProviderConfig> = {
   'openai-codex-acp': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
   opencode: { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
   'copilot-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  // gemini-cli ships as a marketplace extension; we still seed a default here so
+  // that initAIProviderSettings() (which runs before the extension system loads)
+  // doesn't drop a user's persisted choice when the extension is enabled, and so
+  // fresh installs see it enabled in the model picker once the extension hydrates.
+  'gemini-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
   lmstudio: { enabled: true, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
   // Antigravity-backed Gemini (chat provider). Auth rides ~/.gemini; no API key.
   'antigravity-gemini': { enabled: true, testStatus: 'idle' },
