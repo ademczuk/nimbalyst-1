@@ -74,12 +74,28 @@ export const antigravityIndicatorVisibleAtom = atom((get) => {
   const providers = get(providersAtom);
   // Force re-evaluation on extension load/unload so ProviderRegistry.has()
   // results reflect the current install state.
-  get(extensionProviderRegistryVersionAtom);
+  const registryVersion = get(extensionProviderRegistryVersionAtom);
   const chatEnabled = providers['antigravity-gemini']?.enabled === true;
   const agentEnabled = providers['antigravity-gemini-agent']?.enabled === true;
   const chatInstalled = ProviderRegistry.has('antigravity-gemini');
   const agentInstalled = ProviderRegistry.has('antigravity-gemini-agent');
-  return (chatEnabled && chatInstalled) || (agentEnabled && agentInstalled);
+  const result = (chatEnabled && chatInstalled) || (agentEnabled && agentInstalled);
+  // CLA-185 DIAGNOSTIC: every atom evaluation logs all four gates + result so
+  // we can correlate ai-settings:changed broadcasts and registry bumps against
+  // what the chip's visibility decision actually saw. If the user reports the
+  // chip missing while ai-settings.json holds enabled:true for both, expect
+  // chatEnabled/agentEnabled true here too - if not, providersAtom is stale.
+  // If enabled is true but installed is false, the ProviderRegistry mutation
+  // hasn't reached this atom yet.
+  console.log('[antigravityIndicatorVisibleAtom] eval', {
+    chatEnabled,
+    agentEnabled,
+    chatInstalled,
+    agentInstalled,
+    registryVersion,
+    result,
+  });
+  return result;
 });
 
 /** Percentage of monthly prompt credits remaining (null if not reported). */

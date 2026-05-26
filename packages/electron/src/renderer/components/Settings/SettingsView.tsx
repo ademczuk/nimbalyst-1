@@ -663,12 +663,45 @@ export function SettingsView({
         // gemini-antigravity contributes the Antigravity / Antigravity Agent
         // settings panels without the host having to know about them.
         const loader = getExtensionLoader();
-        if (!loader) return null;
+        // CLA-185 DIAGNOSTIC: log every default-case fallthrough so we can
+        // confirm which renderPanel branch the antigravity panel hits. If
+        // selectedCategory is 'antigravity-gemini[-agent]' but loader is
+        // null OR no contribution matches, the user sees an empty body and
+        // can't click Test connection because the component never mounts.
+        const isAntigravity =
+          selectedCategory === 'antigravity-gemini' ||
+          selectedCategory === 'antigravity-gemini-agent';
+        if (isAntigravity) {
+          console.log('[SettingsView.renderPanel] default-case for antigravity', {
+            selectedCategory,
+            loaderPresent: Boolean(loader),
+            aiProviderCount: loader?.getAiProviders().length ?? 0,
+            configEnabled: providers[selectedCategory]?.enabled === true,
+            availableModelsCount: availableModels[selectedCategory]?.length ?? 0,
+          });
+        }
+        if (!loader) {
+          if (isAntigravity) {
+            console.warn(
+              '[SettingsView.renderPanel] loader missing, returning null for antigravity panel',
+              { selectedCategory },
+            );
+          }
+          return null;
+        }
         let extensionPanel: React.ReactNode | null = null;
         for (const entry of loader.getAiProviders()) {
           if (entry.contribution.id !== selectedCategory) continue;
           const panelKey = entry.contribution.settingsPanelComponent;
-          if (!panelKey) break;
+          if (!panelKey) {
+            if (isAntigravity) {
+              console.warn(
+                '[SettingsView.renderPanel] antigravity contribution has no settingsPanelComponent',
+                { selectedCategory, extensionId: entry.extensionId },
+              );
+            }
+            break;
+          }
           const loaded = loader.getExtension(entry.extensionId);
           const component = loaded?.module.settingsPanel?.[panelKey];
           if (!component) {
@@ -676,6 +709,12 @@ export function SettingsView({
               `[SettingsView] Extension ${entry.extensionId} declares settingsPanelComponent "${panelKey}" for provider "${entry.contribution.id}" but does not export it`,
             );
             break;
+          }
+          if (isAntigravity) {
+            console.log(
+              '[SettingsView.renderPanel] resolved antigravity panel component, rendering',
+              { selectedCategory, panelKey, extensionId: entry.extensionId },
+            );
           }
           // The extension SDK types `settingsPanel` exports as
           // ComponentType<SettingsPanelProps> (the document/storage panel
@@ -693,6 +732,12 @@ export function SettingsView({
             <ExtPanel {...commonProps} />,
           );
           break;
+        }
+        if (isAntigravity && extensionPanel === null) {
+          console.warn(
+            '[SettingsView.renderPanel] antigravity panel resolution fell through (no contribution matched + no component); returning null',
+            { selectedCategory },
+          );
         }
         return extensionPanel;
       }

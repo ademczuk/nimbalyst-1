@@ -49,6 +49,22 @@ export function AntigravitySettings({
   const allSelected = availableModels.length > 0
     && availableModels.every((m) => enabledModelIds.includes(m.id));
 
+  // CLA-185 DIAGNOSTIC: log every render so we can correlate clicks against
+  // the props the panel actually saw. If config.enabled is false at the moment
+  // the user clicks Test connection or a model checkbox, that explains the
+  // "nothing happens" symptom even if main-side broadcasts say enabled=true.
+  // Remove these once the disconnect is isolated.
+  console.log('[AntigravitySettings] render', {
+    provider: 'antigravity-gemini',
+    isEnabled: config.enabled === true,
+    testStatus: config.testStatus,
+    modelsCount: availableModels.length,
+    enabledModelIdsCount: enabledModelIds.length,
+    enabledModelIds,
+    isLoadingModels: Boolean(loading),
+    allSelected,
+  });
+
   return (
     <div className="provider-panel antigravity-panel flex flex-col" data-testid="antigravity-settings">
       <div className="antigravity-main-column flex-1 flex flex-col">
@@ -81,7 +97,25 @@ export function AntigravitySettings({
             </div>
             <button
               type="button"
-              onClick={() => { void onTestConnection(); }}
+              onClick={() => {
+                console.log(
+                  '[AntigravitySettings] Test connection clicked, calling onTestConnection() for antigravity-gemini',
+                  { configEnabled: config.enabled === true, currentTestStatus: config.testStatus },
+                );
+                const promise = onTestConnection();
+                Promise.resolve(promise)
+                  .then(() => {
+                    console.log(
+                      '[AntigravitySettings] Test connection resolved for antigravity-gemini',
+                    );
+                  })
+                  .catch((err) => {
+                    console.error(
+                      '[AntigravitySettings] Test connection threw for antigravity-gemini:',
+                      err,
+                    );
+                  });
+              }}
               disabled={loading || config.testStatus === 'testing'}
               className={`provider-test-button py-2 px-4 rounded-md text-sm font-medium whitespace-nowrap cursor-pointer transition-all bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)] border border-[var(--nim-border)] hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] disabled:opacity-50 ${
                 config.testStatus === 'success' ? 'text-[var(--nim-success)] border-[var(--nim-success)]' : ''
@@ -114,7 +148,13 @@ export function AntigravitySettings({
             id="agy-enable"
             type="checkbox"
             checked={config.enabled || false}
-            onChange={(e) => onToggle(e.target.checked)}
+            onChange={(e) => {
+              console.log(
+                '[AntigravitySettings] enable toggle for antigravity-gemini',
+                { newState: e.target.checked, currentEnabled: config.enabled === true },
+              );
+              onToggle(e.target.checked);
+            }}
             className="cursor-pointer"
           />
         </div>
@@ -133,7 +173,13 @@ export function AntigravitySettings({
                 {availableModels.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => onSelectAllModels(!allSelected)}
+                    onClick={() => {
+                      console.log(
+                        '[AntigravitySettings] Select/Deselect-all clicked for antigravity-gemini',
+                        { newState: !allSelected, modelsCount: availableModels.length },
+                      );
+                      onSelectAllModels(!allSelected);
+                    }}
                     className="text-[13px] text-[var(--nim-primary)] hover:underline"
                   >
                     {allSelected ? 'Deselect all' : 'Select all'}
@@ -155,7 +201,18 @@ export function AntigravitySettings({
                         type="checkbox"
                         id={`agy-model-${model.id}`}
                         checked={enabledModelIds.includes(model.id)}
-                        onChange={(e) => onModelToggle(model.id, e.target.checked)}
+                        onChange={(e) => {
+                          console.log(
+                            '[AntigravitySettings] model toggle for antigravity-gemini',
+                            {
+                              modelId: model.id,
+                              newState: e.target.checked,
+                              previousEnabledIds: enabledModelIds,
+                              configEnabled: config.enabled === true,
+                            },
+                          );
+                          onModelToggle(model.id, e.target.checked);
+                        }}
                       />
                       <label htmlFor={`agy-model-${model.id}`} className="text-sm text-[var(--nim-text)]">
                         {model.name}
