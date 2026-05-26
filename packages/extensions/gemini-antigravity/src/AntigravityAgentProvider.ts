@@ -27,10 +27,20 @@ const PROVIDER_ID = 'antigravity-gemini-agent';
 /** Stable model key for Gemini 3.5 Flash High. */
 export const ANTIGRAVITY_AGENT_DEFAULT_KEY = 'gemini-3-flash-agent';
 
-/** Model keys this agent provider surfaces. */
+/**
+ * Model keys this agent provider surfaces.
+ *
+ * Mirrors the three tiers from AntigravityProvider (chat) so the dropdown shows
+ * the same High / Medium / Low choices in agent sessions. Prior to 2026-05-26
+ * only two keys (gemini-3-flash-agent and gemini-3.5-flash-low) were surfaced,
+ * which left users in agent sessions thinking the picker was ignoring their
+ * Medium/Low selection because the gap between catalog entries didn't match
+ * the chat provider they had used previously.
+ */
 const SURFACED_MODEL_KEYS = new Set<string>([
-  'gemini-3-flash-agent',
-  'gemini-3.5-flash-low',
+  'gemini-3-flash-agent',       // Gemini 3.5 Flash (High)
+  'gemini-3.5-flash-low',       // Gemini 3.5 Flash (Medium)
+  'gemini-3.5-flash-extra-low', // Gemini 3.5 Flash (Low)
 ]);
 
 interface AntigravityAgentConfig {
@@ -280,7 +290,7 @@ export class AntigravityAgentProvider {
       if (!SURFACED_MODEL_KEYS.has(info.key)) continue;
       out.push(toAIModel(info));
     }
-    const order = ['gemini-3-flash-agent', 'gemini-3.5-flash-low'];
+    const order = ['gemini-3-flash-agent', 'gemini-3.5-flash-low', 'gemini-3.5-flash-extra-low'];
     out.sort((a, b) => order.indexOf(stripPrefix(a.id)) - order.indexOf(stripPrefix(b.id)));
     return out;
   }
