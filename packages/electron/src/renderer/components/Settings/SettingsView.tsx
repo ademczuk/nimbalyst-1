@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol, getExtensionLoader } from '@nimbalyst/runtime';
 import { store } from '@nimbalyst/runtime/store';
 import { SettingsSidebar, type SettingsCategory } from './SettingsSidebar';
 import { pushNavigationEntryAtom, isRestoringNavigationAtom } from '../../store';
@@ -627,8 +627,50 @@ export function SettingsView({
             onViewInstalled={() => setSelectedCategory('installed-extensions')}
           />
         );
-      default:
-        return null;
+      default: {
+        // Dispatch to extension-contributed provider settings panels.
+        // Extensions declare aiProviders[].settingsPanelComponent pointing at
+        // an export under their module's `settingsPanel` record. We look up
+        // the provider contribution by ID (which is also the sidebar category
+        // id), find the matching extension settings-panel component, and
+        // render it with the same commonProps the built-in provider panels
+        // receive (config, apiKeys, availableModels, callbacks). This is how
+        // gemini-antigravity contributes the Antigravity / Antigravity Agent
+        // settings panels without the host having to know about them.
+        const loader = getExtensionLoader();
+        if (!loader) return null;
+        let extensionPanel: React.ReactNode | null = null;
+        for (const entry of loader.getAiProviders()) {
+          if (entry.contribution.id !== selectedCategory) continue;
+          const panelKey = entry.contribution.settingsPanelComponent;
+          if (!panelKey) break;
+          const loaded = loader.getExtension(entry.extensionId);
+          const component = loaded?.module.settingsPanel?.[panelKey];
+          if (!component) {
+            console.warn(
+              `[SettingsView] Extension ${entry.extensionId} declares settingsPanelComponent "${panelKey}" for provider "${entry.contribution.id}" but does not export it`,
+            );
+            break;
+          }
+          // The extension SDK types `settingsPanel` exports as
+          // ComponentType<SettingsPanelProps> (the document/storage panel
+          // shape used by extensions that render workspace-scoped settings).
+          // For aiProviders[].settingsPanelComponent the host actually passes
+          // provider-panel props (config, apiKeys, availableModels, the same
+          // callbacks the built-in provider panels receive), because the
+          // panel needs to drive Test Connection, model selection, and quota
+          // for the provider it belongs to. Cast through unknown to
+          // acknowledge the wider per-provider contract.
+          const ExtPanel = component as unknown as React.ComponentType<typeof commonProps>;
+          extensionPanel = wrapWithOverride(
+            entry.contribution.id,
+            entry.contribution.label,
+            <ExtPanel {...commonProps} />,
+          );
+          break;
+        }
+        return extensionPanel;
+      }
     }
   };
 

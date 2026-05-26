@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol, getProviderIcon, getExtensionLoader } from '@nimbalyst/runtime';
 import { useAlphaFeatures } from '../../hooks/useAlphaFeature';
 import { AlphaBadge } from '../common/AlphaBadge';
 
@@ -62,6 +62,55 @@ interface SettingsSidebarProps {
   scope?: SettingsScope;
 }
 
+/**
+ * Extension-contributed provider sidebar entries. Each entry pairs an
+ * extension's AI-provider id (used as the sidebar category id and the
+ * SettingsView panel switch key) with the metadata needed to render it
+ * in the right sidebar group.
+ */
+interface ExtensionProviderSidebarEntry {
+  id: string;
+  label: string;
+  icon: string | undefined;
+  isAgent: boolean;
+  isChat: boolean;
+}
+
+/**
+ * Read extension-contributed AI providers from the extension loader and
+ * subscribe to loader changes so the sidebar updates immediately when the
+ * user installs, uninstalls, enables, or disables an extension. Returns an
+ * empty list when the loader has not been initialized (e.g. on the very
+ * first render before the extension system mounts).
+ */
+function useExtensionProviderSidebarEntries(): ExtensionProviderSidebarEntry[] {
+  const [entries, setEntries] = useState<ExtensionProviderSidebarEntry[]>([]);
+
+  useEffect(() => {
+    const compute = () => {
+      const loader = getExtensionLoader();
+      if (!loader) {
+        setEntries([]);
+        return;
+      }
+      const next: ExtensionProviderSidebarEntry[] = loader.getAiProviders().map(({ contribution }) => ({
+        id: contribution.id,
+        label: contribution.label,
+        icon: contribution.icon,
+        isAgent: contribution.isAgent ?? false,
+        isChat: contribution.isChat ?? false,
+      }));
+      setEntries(next);
+    };
+
+    compute();
+    const loader = getExtensionLoader();
+    return loader?.subscribe(compute);
+  }, []);
+
+  return entries;
+}
+
 export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   selectedCategory,
   onSelectCategory,
@@ -72,6 +121,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   // Per-feature panels (Voice Mode, OpenCode, Copilot, Agent Features) are always visible
   // so users can discover and enable them; the panels themselves gate their controls.
   const alphaFeatures = useAlphaFeatures(['collaboration']);
+  const extensionProviders = useExtensionProviderSidebarEntries();
   const getStatusDot = (providerId: string): 'success' | 'warning' | 'error' | undefined => {
     const status = providerStatus[providerId];
     if (!status) return undefined;
@@ -79,6 +129,26 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
     if (status.enabled && status.testStatus === 'error') return 'error';
     return undefined;
   };
+
+  // Build dynamic sidebar items from extension-contributed providers, split
+  // by whether the provider is an agent or a chat provider. Each item uses
+  // the provider's icon when known and falls back to a smart-toy glyph.
+  const extensionAgentItems: CategoryItem[] = extensionProviders
+    .filter((entry) => entry.isAgent)
+    .map((entry) => ({
+      id: entry.id as SettingsCategory,
+      name: entry.label,
+      icon: <MaterialSymbol icon={entry.icon || 'smart_toy'} size={16} />,
+      statusDot: getStatusDot(entry.id),
+    }));
+  const extensionChatItems: CategoryItem[] = extensionProviders
+    .filter((entry) => entry.isChat)
+    .map((entry) => ({
+      id: entry.id as SettingsCategory,
+      name: entry.label,
+      icon: <MaterialSymbol icon={entry.icon || 'smart_toy'} size={16} />,
+      statusDot: getStatusDot(entry.id),
+    }));
 
   const categoryGroups: CategoryGroup[] = [
     {
@@ -164,8 +234,12 @@ Best for complex coding tasks.`,
           statusDot: getStatusDot('copilot-cli'),
           isAlpha: true,
         },
-        // antigravity-gemini-agent now ships as a marketplace extension and
-        // appears here only when the user installs `gemini-antigravity`.
+        // Extension-contributed agent providers appear here once the user
+        // installs the contributing extension (e.g. gemini-antigravity
+        // contributes `antigravity-gemini-agent`). The list is empty by
+        // default; the sidebar re-renders when the extension loader fires
+        // a change event.
+        ...extensionAgentItems,
       ],
     },
     {
@@ -194,8 +268,10 @@ Best for quick edits and tasks that do not require multi-file operations.`,
           icon: getProviderIcon('lmstudio', { size: 16 }),
           statusDot: getStatusDot('lmstudio'),
         },
-        // antigravity-gemini now ships as a marketplace extension and appears
-        // here only when the user installs `gemini-antigravity`.
+        // Extension-contributed chat providers appear here once the user
+        // installs the contributing extension (e.g. gemini-antigravity
+        // contributes `antigravity-gemini`).
+        ...extensionChatItems,
       ],
     },
     {
