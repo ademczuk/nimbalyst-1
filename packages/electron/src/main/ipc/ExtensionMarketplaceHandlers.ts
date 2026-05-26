@@ -602,10 +602,70 @@ export function queueMarketplaceInstallRequest(extensionId: string): void {
 }
 
 /**
+ * Reconcile the marketplace-installs electron-store entries against the actual
+ * contents of the user extensions dir. If an entry is tracked but its
+ * extension directory is missing (e.g. the user deleted it by hand outside
+ * the UI), prune the stale entry. Returns the reconciled installs map.
+ *
+ * This is the source of truth for what counts as "installed via marketplace":
+ * the tracking record AND the on-disk directory. Either one missing means
+ * not installed.
+ */
+export async function reconcileMarketplaceInstallsWithDisk(): Promise<Record<string, MarketplaceInstallRecord>> {
+  const installs = getMarketplaceInstalls();
+  const ids = Object.keys(installs);
+  if (ids.length === 0) return installs;
+
+  const extensionsDir = await getUserExtensionsDirectory();
+  const pruned: string[] = [];
+
+  for (const extensionId of ids) {
+    const installPath = path.join(extensionsDir, extensionId);
+    try {
+      const stat = await fs.stat(installPath);
+      if (!stat.isDirectory()) {
+        pruned.push(extensionId);
+        continue;
+      }
+      // Also require a manifest.json -- a bare directory without a manifest
+      // would have failed to load anyway.
+      try {
+        await fs.access(path.join(installPath, 'manifest.json'));
+      } catch {
+        pruned.push(extensionId);
+      }
+    } catch {
+      // Directory does not exist -- the user deleted it out of band.
+      pruned.push(extensionId);
+    }
+  }
+
+  if (pruned.length === 0) return installs;
+
+  for (const extensionId of pruned) {
+    delete installs[extensionId];
+    removeMarketplaceInstall(extensionId);
+    logger.main.info(`[ExtMarketplace] Pruned stale marketplace install record for ${extensionId} (directory missing from user extensions dir)`);
+  }
+
+  return installs;
+}
+
+/**
  * Silently check for and apply extension updates.
  * Intended to be called once on app startup (fire-and-forget).
+ *
+ * Also reconciles marketplace install tracking against disk before checking
+ * for updates so we don't try to "update" an extension the user has already
+ * deleted out of band.
  */
 export async function runExtensionAutoUpdate(): Promise<void> {
+  try {
+    await reconcileMarketplaceInstallsWithDisk();
+  } catch (err) {
+    logger.main.warn('[ExtMarketplace] Install reconciliation failed:', err);
+  }
+
   try {
     const updates = await checkForUpdates();
     if (updates.length === 0) return;
@@ -642,9 +702,13 @@ export function registerExtensionMarketplaceHandlers(): void {
   });
 
   // Get marketplace-installed extensions
+  //
+  // Reconciles the electron-store tracking against the actual user extensions
+  // dir on every call so the renderer never sees a ghost entry left behind by
+  // an out-of-band directory delete. Cheap: O(installed-count) fs.stat calls.
   safeHandle('extension-marketplace:get-installed', async () => {
     try {
-      const installs = getMarketplaceInstalls();
+      const installs = await reconcileMarketplaceInstallsWithDisk();
       return { success: true, data: installs };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
