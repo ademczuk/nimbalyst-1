@@ -23,7 +23,7 @@
         "dynamicModels": true,
         "transcriptParser": "claude-code",
         "defaultModelId": "antigravity-gemini:gemini-3-flash-agent",
-        "icon": "gemini-cli",
+        "icon": "gemini",
         "settingsPanelComponent": "AntigravitySettings"
       },
       {
@@ -36,7 +36,7 @@
         "dynamicModels": true,
         "transcriptParser": "claude-code",
         "defaultModelId": "antigravity-gemini-agent:gemini-3-flash-agent",
-        "icon": "gemini-cli",
+        "icon": "gemini",
         "settingsPanelComponent": "AntigravityAgentSettings"
       }
     ]
@@ -44,7 +44,7 @@
   "marketplace": {
     "categories": ["ai-tools"],
     "tags": ["gemini", "google", "ai", "antigravity", "agent", "chat"],
-    "icon": "gemini-cli",
+    "icon": "gemini",
     "featured": true,
     "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",
     "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Includes both a chat provider for one-shot prompts and an agent provider with tool-loop support. Authentication uses your existing ~/.gemini OAuth login - no API key required. Tracks per-model quota and account credits so you can avoid rate limits.",

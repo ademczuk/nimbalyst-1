@@ -11,7 +11,13 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   'copilot-cli': 'terminal',
   // ACP transport reuses the OpenAI Codex icon (same underlying agent).
   'openai-codex-acp': 'openai-codex',
-  'gemini-cli': 'smart_toy',
+  // The 'gemini-cli' and 'gemini' icon keys both render the geometric Gemini
+  // blue-spark logo (see MaterialSymbol CUSTOM_ICONS). Per the user 2026-05-25
+  // request, the icon is the logo only - no "GEMINI CLI" wordmark text. The
+  // gemini-antigravity (Gemini 3.5 Flash) extension reuses the same icon.
+  'gemini-cli': 'gemini-cli',
+  'antigravity-gemini': 'gemini',
+  'antigravity-gemini-agent': 'gemini',
 };
 
 export function resolveProviderIcon(provider: string): string {
