@@ -404,21 +404,35 @@ export class TeamSyncProvider {
   }
 
   private async handleDocIndexBroadcast(msg: TeamDocIndexBroadcastMessage): Promise<void> {
+    let entry: DocIndexEntry;
     try {
-      const entry = await this.decryptEntry(msg.document);
-      this.localEntries.set(entry.documentId, entry);
-      if (this.teamState) {
-        const idx = this.teamState.documents.findIndex(d => d.documentId === entry.documentId);
-        if (idx >= 0) {
-          this.teamState.documents[idx] = entry;
-        } else {
-          this.teamState.documents.push(entry);
-        }
-      }
-      this.config.onDocumentChanged?.(entry);
+      entry = await this.decryptEntry(msg.document);
     } catch (err) {
-      console.error('[TeamSync] Failed to decrypt doc index broadcast:', msg.document.documentId, err);
+      console.warn(
+        '[TeamSync] Title decrypt failed on broadcast; surfacing as locked entry:',
+        msg.document.documentId,
+        err,
+      );
+      entry = {
+        documentId: msg.document.documentId,
+        title: '',
+        documentType: msg.document.documentType,
+        createdBy: msg.document.createdBy,
+        createdAt: msg.document.createdAt,
+        updatedAt: msg.document.updatedAt,
+        decryptFailed: true,
+      };
     }
+    this.localEntries.set(entry.documentId, entry);
+    if (this.teamState) {
+      const idx = this.teamState.documents.findIndex(d => d.documentId === entry.documentId);
+      if (idx >= 0) {
+        this.teamState.documents[idx] = entry;
+      } else {
+        this.teamState.documents.push(entry);
+      }
+    }
+    this.config.onDocumentChanged?.(entry);
   }
 
   private handleOrgKeyRotated(msg: TeamOrgKeyRotatedMessage): void {
@@ -444,7 +458,23 @@ export class TeamSyncProvider {
       try {
         results.push(await this.decryptEntry(e));
       } catch (err) {
-        console.error('[TeamSync] Failed to decrypt document:', e.documentId, err);
+        // Preserve the entry as a locked placeholder so the user can see
+        // that a doc exists and take action (refresh keys, ask admin to
+        // rewrap), rather than the entry disappearing without trace.
+        console.warn(
+          '[TeamSync] Title decrypt failed; surfacing as locked entry:',
+          e.documentId,
+          err,
+        );
+        results.push({
+          documentId: e.documentId,
+          title: '',
+          documentType: e.documentType,
+          createdBy: e.createdBy,
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+          decryptFailed: true,
+        });
       }
     }
     return results;

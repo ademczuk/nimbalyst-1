@@ -29,6 +29,11 @@ export interface SharedDocument {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * True when the doc index entry's encrypted title could not be decrypted.
+   * Rendered as a locked placeholder in the sidebar; not openable.
+   */
+  decryptFailed?: boolean;
 }
 
 type TeamSyncStatus = 'disconnected' | 'connecting' | 'syncing' | 'connected' | 'error';
@@ -381,6 +386,7 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
             createdBy: d.createdBy,
             createdAt: d.createdAt,
             updatedAt: d.updatedAt,
+            decryptFailed: d.decryptFailed,
           })));
         }
       },
@@ -393,6 +399,7 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
           createdBy: d.createdBy,
           createdAt: d.createdAt,
           updatedAt: d.updatedAt,
+          decryptFailed: d.decryptFailed,
         })));
       },
 
@@ -406,6 +413,7 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
             createdBy: document.createdBy,
             createdAt: document.createdAt,
             updatedAt: document.updatedAt,
+            decryptFailed: document.decryptFailed,
           }, ...filtered];
         });
       },

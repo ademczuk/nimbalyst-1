@@ -271,14 +271,37 @@ export class ExcalidrawBinding {
     this.ensureValidOrderingKeys();
 
     if (initialValue.length > 0) {
-      // restoreElements normalises shapes that may have been seeded by an
-      // older client / different Excalidraw version. We don't pass them
-      // through updateScene -- doing so would double-bind and clear the
-      // canvas (see notes in the prior Crystal binding).
-      restoreElements(initialValue, null, {
+      // Push the synced Y.Doc state onto the canvas. For recipients of a
+      // shared doc this is the first time the canvas sees these elements --
+      // the editor was mounted with empty initialData because
+      // host.loadContent() returns '' in collab mode. restoreElements
+      // normalises shapes seeded by an older client or a different
+      // Excalidraw version.
+      const normalised = restoreElements(initialValue, null, {
         repairBindings: true,
         refreshDimensions: true,
       });
+      this.api.updateScene({ elements: normalised });
+
+      // Refresh lastKnownElements from the freshly-rendered scene so the
+      // first onChange tick (debounced 50ms) sees a matching baseline.
+      // If restoreElements or refreshDimensions bumped any versions during
+      // normalisation, the cache would otherwise diff non-zero and echo
+      // the initial render back into Y.Doc.
+      const posById = new Map<string, string>();
+      for (const x of this.yElements.toArray()) {
+        const el = x.get('el') as { id: string };
+        posById.set(el.id, x.get('pos') as string);
+      }
+      const renderedElements = this.api.getSceneElements();
+      this.lastKnownElements = renderedElements
+        .map((el) => ({
+          id: el.id,
+          version: el.version,
+          pos: posById.get(el.id) ?? '',
+        }))
+        .filter((entry) => entry.pos !== '')
+        .sort((a, b) => (a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0));
 
       // Fit content on initial mount.
       setTimeout(() => {

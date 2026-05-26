@@ -157,4 +157,11 @@ export interface DocIndexEntry {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * True when the server returned a doc index entry whose encrypted title
+   * could not be decrypted with the current org key. Preserved in the list
+   * so the user can see something exists rather than the entry vanishing
+   * silently; the UI should render it as locked / non-interactive.
+   */
+  decryptFailed?: boolean;
 }

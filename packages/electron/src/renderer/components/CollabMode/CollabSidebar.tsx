@@ -10,6 +10,7 @@ import {
   removeSharedDocument,
   updateSharedDocumentTitle,
   activeTeamOrgIdAtom,
+  workspaceHasTeamAtom,
   buildSharedDocumentDeepLink,
   type SharedDocument,
 } from '../../store/atoms/collabDocuments';
@@ -26,6 +27,9 @@ import {
 } from './collabTree';
 import { registerDocumentInIndex } from '../../store/atoms/collabDocuments';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
+import { useSetAtom } from 'jotai';
+import { historyDialogFileAtom } from '../../store/atoms/historyDialog';
+import { buildCollabUri } from '../../utils/collabUri';
 
 // ---------------------------------------------------------------------------
 // TeamSync status indicator -- shown in the header subtitle slot
@@ -65,6 +69,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const teamSyncStatus = useAtomValue(teamSyncStatusAtom);
   const teamOrgId = useAtomValue(activeTeamOrgIdAtom);
+  const workspaceHasTeam = useAtomValue(workspaceHasTeamAtom);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -78,12 +83,18 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   const [documentToRename, setDocumentToRename] = useState<SharedDocument | null>(null);
   const [hasLoadedState, setHasLoadedState] = useState(false);
   const [loadedWorkspacePath, setLoadedWorkspacePath] = useState<string | null>(null);
+  const setHistoryDialogFile = useSetAtom(historyDialogFileAtom);
   const [draggedDocument, setDraggedDocument] = useState<{
     documentId: string;
     sourcePath: string;
     name: string;
   } | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  // Track whether the user has manually customized the expansion set since
+  // the initial workspace state load. Until they do, we auto-expand folders
+  // that contain shared docs so newly synced content isn't hidden behind
+  // collapsed parents the user has never opened.
+  const [userTouchedExpansion, setUserTouchedExpansion] = useState(false);
 
   const tree = useMemo(
     () => buildCollabTree(sharedDocuments, customFolders),
@@ -143,6 +154,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     setSelectedFolderPath(null);
     setExpandedFolders(new Set());
     setCustomFolders([]);
+    setUserTouchedExpansion(false);
 
     if (!workspacePath || !window.electronAPI?.invoke) {
       setHasLoadedState(true);
@@ -163,6 +175,11 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
 
         setExpandedFolders(new Set(nextExpanded));
         setCustomFolders(Array.from(new Set(nextFolders)));
+        // Treat persisted tree state as a user customization so we don't
+        // override the user's collapse decisions with the auto-expand fallback.
+        setUserTouchedExpansion(
+          state?.collabTree?.userTouched === true || nextExpanded.length > 0 || nextFolders.length > 0
+        );
         setHasLoadedState(true);
         setLoadedWorkspacePath(workspacePath);
       })
@@ -184,13 +201,14 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       collabTree: {
         expandedFolders: Array.from(expandedFolders),
         customFolders,
+        userTouched: userTouchedExpansion,
       },
     };
 
     window.electronAPI.invoke('workspace:update-state', workspacePath, payload).catch((error) => {
       console.warn('[CollabSidebar] Failed to persist tree state:', error);
     });
-  }, [customFolders, expandedFolders, hasLoadedState, loadedWorkspacePath, workspacePath]);
+  }, [customFolders, expandedFolders, hasLoadedState, loadedWorkspacePath, userTouchedExpansion, workspacePath]);
 
   useEffect(() => {
     if (!activeDocument) return;
@@ -263,6 +281,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   }, [canMutateMetadata, contextMenu]);
 
   const toggleFolder = useCallback((folderPath: string) => {
+    setUserTouchedExpansion(true);
     setExpandedFolders((currentFolders) => {
       const next = new Set(currentFolders);
       if (next.has(folderPath)) {
@@ -273,6 +292,39 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       return next;
     });
   }, []);
+
+  // Auto-expand any folder that contains a shared document on initial load,
+  // so a fresh visit to Collab mode doesn't hide docs behind collapsed
+  // parents. Only applies until the user manually toggles a folder, at
+  // which point persisted expansion state takes over.
+  useEffect(() => {
+    if (!hasLoadedState || loadedWorkspacePath !== workspacePath) return;
+    if (userTouchedExpansion) return;
+    if (sharedDocuments.length === 0) return;
+
+    const docFolderPaths = new Set<string>();
+    for (const document of sharedDocuments) {
+      const path = getCollabDocumentPath(document);
+      let parent = getCollabParentPath(path);
+      while (parent) {
+        docFolderPaths.add(parent);
+        parent = getCollabParentPath(parent);
+      }
+    }
+    if (docFolderPaths.size === 0) return;
+
+    setExpandedFolders((currentFolders) => {
+      let changed = false;
+      const next = new Set(currentFolders);
+      for (const folderPath of docFolderPaths) {
+        if (!next.has(folderPath)) {
+          next.add(folderPath);
+          changed = true;
+        }
+      }
+      return changed ? next : currentFolders;
+    });
+  }, [hasLoadedState, loadedWorkspacePath, workspacePath, sharedDocuments, userTouchedExpansion]);
 
   const getCreationBaseFolder = useCallback(() => {
     return contextMenu?.node.type === 'folder'
@@ -489,6 +541,32 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       }
 
       const isActive = node.document.documentId === activeDocumentId;
+      const isLocked = node.document.decryptFailed === true;
+
+      if (isLocked) {
+        const lockedTitle =
+          'This document\'s title is encrypted with a key your account does not currently have. ' +
+          'Ask a team admin to refresh / rewrap your key envelope, then reopen the workspace.';
+        return (
+          <button
+            key={node.id}
+            type="button"
+            disabled
+            data-testid="collab-sidebar-locked-doc"
+            className="w-full flex items-center text-left file-tree-file opacity-60 cursor-not-allowed"
+            style={{ paddingLeft: indent }}
+            title={lockedTitle}
+          >
+            <span className="file-tree-spacer" />
+            <span className="file-tree-icon">
+              <MaterialSymbol icon="lock" size={16} />
+            </span>
+            <span className="file-tree-name italic text-[var(--nim-text-faint)]">
+              Encrypted document (key unavailable)
+            </span>
+          </button>
+        );
+      }
 
       return (
         <button
@@ -614,19 +692,45 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
           void moveDraggedDocument(null);
         }}
       >
-        {tree.length === 0 ? (
-          <div className="px-2 py-4 text-center">
-            <MaterialSymbol icon="cloud_sync" size={32} className="text-nim-faint mb-2" />
-            <p className="text-xs text-nim-faint m-0">
-              No shared documents yet.
-            </p>
-            <p className="text-xs text-nim-faint mt-1 m-0">
-              Create one here or share a local file to collaborate.
-            </p>
-          </div>
-        ) : (
-          <div>{renderTree(tree)}</div>
-        )}
+        {(() => {
+          // Loading: still resolving workspace state, or team sync is mid-
+          // handshake. Render a skeleton instead of an empty/folders-only
+          // tree so users don't think their docs disappeared.
+          const isResolvingSync =
+            teamSyncStatus === 'connecting' || teamSyncStatus === 'syncing';
+          if (!hasLoadedState || isResolvingSync) {
+            return (
+              <div className="px-2 py-4 text-center" data-testid="collab-sidebar-loading">
+                <MaterialSymbol
+                  icon="cloud_sync"
+                  size={32}
+                  className="text-nim-faint mb-2 animate-pulse"
+                />
+                <p className="text-xs text-nim-faint m-0">
+                  Loading shared documents...
+                </p>
+              </div>
+            );
+          }
+          if (tree.length === 0) {
+            return (
+              <div className="px-2 py-4 text-center">
+                <MaterialSymbol icon="cloud_sync" size={32} className="text-nim-faint mb-2" />
+                <p className="text-xs text-nim-faint m-0">
+                  {workspaceHasTeam
+                    ? 'No shared documents yet.'
+                    : 'No team connected to this workspace.'}
+                </p>
+                {workspaceHasTeam && (
+                  <p className="text-xs text-nim-faint mt-1 m-0">
+                    Create one here or share a local file to collaborate.
+                  </p>
+                )}
+              </div>
+            );
+          }
+          return <div>{renderTree(tree)}</div>;
+        })()}
       </div>
 
       {/* Context menu */}
@@ -684,6 +788,24 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
               >
                 <MaterialSymbol icon="link" size={18} />
                 <span>Copy Link</span>
+              </button>
+              <button
+                type="button"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded border-none bg-transparent cursor-pointer transition-colors text-left text-nim hover:bg-nim-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!teamOrgId}
+                title={teamOrgId ? undefined : 'No team is connected to this workspace'}
+                onClick={() => {
+                  if (!contextDocument || !teamOrgId) return;
+                  setContextMenu(null);
+                  // Open the tab if it isn't already; the CollaborativeTabEditor
+                  // publishes a history controller on mount. The dialog itself
+                  // grace-waits for the controller to register.
+                  onDocumentSelect(contextDocument);
+                  setHistoryDialogFile(buildCollabUri(teamOrgId, contextDocument.documentId));
+                }}
+              >
+                <MaterialSymbol icon="history" size={18} />
+                <span>View History</span>
               </button>
               <button
                 type="button"

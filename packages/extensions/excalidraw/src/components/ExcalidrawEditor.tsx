@@ -241,17 +241,26 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
   // first-time seeding (if needed).
   const excalidrawDomRef = useRef<HTMLDivElement | null>(null);
   const bindingRef = useRef<ExcalidrawBinding | null>(null);
+  // Resolvers waiting for excalidrawAPIRef.current to become non-null.
+  // On reopen the SDK hook's seed branch is skipped, which means
+  // createBinding may run before Excalidraw's internal init has fired the
+  // excalidrawAPI ref-callback. Without this gate the binding would
+  // no-op silently and the canvas would stay blank (see root-cause doc
+  // shared-doc-key-and-share-roundtrip-root-cause.md).
+  const apiReadyResolversRef = useRef<Array<(api: ExcalidrawImperativeAPI) => void>>([]);
+  const awaitExcalidrawApi = useCallback((): Promise<ExcalidrawImperativeAPI> => {
+    if (excalidrawAPIRef.current) {
+      return Promise.resolve(excalidrawAPIRef.current);
+    }
+    return new Promise((resolve) => {
+      apiReadyResolversRef.current.push(resolve);
+    });
+  }, []);
   const { isCollaborative, status: collabStatus } = useCollaborativeEditor(host, {
     isEmpty: isExcalidrawYDocEmpty,
     initializeFromContent: seedExcalidrawYDoc,
-    createBinding: ({ yDoc, awareness }) => {
-      const api = excalidrawAPIRef.current;
-      if (!api) {
-        // Should not happen: Excalidraw's onMount callback fires synchronously
-        // and the SDK hook only invokes createBinding after sync completes,
-        // which is comfortably after the canvas has mounted. Guard anyway.
-        return { destroy: () => {} };
-      }
+    createBinding: async ({ yDoc, awareness }) => {
+      const api = await awaitExcalidrawApi();
       const undoManager = new Y.UndoManager(yDoc.getArray('elements'));
       const binding = new ExcalidrawBinding(
         yDoc.getArray('elements'),
@@ -352,7 +361,14 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
         onPointerUpdate={isCollaborative ? onPointerUpdate : undefined}
         excalidrawAPI={(api: any) => {
           excalidrawAPIRef.current = api;
-          if (api) host.registerEditorAPI(createWrappedAPI(api));
+          if (api) {
+            host.registerEditorAPI(createWrappedAPI(api));
+            // Unblock any pending createBinding awaiters now that the
+            // imperative API is live.
+            const resolvers = apiReadyResolversRef.current;
+            apiReadyResolversRef.current = [];
+            for (const resolve of resolvers) resolve(api);
+          }
         }}
         initialData={initialData ?? undefined}
         theme={theme}

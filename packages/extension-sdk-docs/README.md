@@ -10,6 +10,7 @@ Extensions can add:
 - **AI Tools** - Tools that Claude can use to interact with your extension
 - **AI Completions** - Call chat models (Claude, OpenAI, LM Studio) directly from your extension
 - **Slash Commands** - Commands users can invoke from the editor
+- **Markdown and Transcript Integrations** - Extend the built-in markdown editor and AI transcript renderer
 - **File Icons** - Custom icons for file types in the sidebar
 - **New File Types** - Add entries to the "New File" menu
 
@@ -20,6 +21,7 @@ Extensions can add:
 | [getting-started.md](./getting-started.md) | Create your first extension in 10 minutes |
 | [custom-editors.md](./custom-editors.md) | Build editors for new file types |
 | [ai-tools.md](./ai-tools.md) | Add tools that Claude can use |
+| [contribution-points.md](./contribution-points.md) | Extend the built-in markdown editor and transcript renderer |
 | [manifest-reference.md](./manifest-reference.md) | Complete manifest.json schema |
 | [api-reference.md](./api-reference.md) | TypeScript types and interfaces |
 

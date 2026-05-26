@@ -9,16 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Shared documents have revision history: Cmd/Ctrl+S saves a named version, auto snapshots run after idle, and any past revision can be restored from the History dialog.
+- Custom shared-document editors can publish history controllers so the global History dialog can route to collaborative revisions.
 <!-- New features go here -->
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 - Auto-update now downloads in the background and shows only the "Ready to install" toast; the redundant "Update Available" toast has been removed. (#327)
+- Extension docs now cover all four markdown/transcript contribution surfaces in both the internal architecture doc and the public SDK docs, including declarative module exports, diff handlers, transcript renderer hooks, and the current `@nimbalyst/runtime` import surface.
 
 ### Fixed
+- Project quick open now loads recent projects from stored recents instead of crawling every workspace on open.
+- Rebuild Extensions submenu now lists buildable extensions alphabetically.
+- Tracker list, table, and kanban views now share the session-style `#tag` typeahead filter.
+- Session history search bar no longer overlaps floating popovers (e.g. Claude Usage).
+- Re-uploading a local source into a shared markdown document now waits for the collab write to be acknowledged before tearing down the headless sync client.
 <!-- Bug fixes go here -->
 - Codex session-naming reminder no longer leaks into the chat transcript; its turn output is tagged so the transcript hides it. (#420)
 - Excalidraw "import mermaid" now registers the rendered diagram image, so it no longer shows as a broken thumbnail. (#428)
+- Codex sessions now append actionable guidance when `~/.codex/config.toml` has a url-based MCP server the bundled Codex rejects, instead of an opaque config-load failure. (#424)
 
 ### Removed
 <!-- Removed features go here -->

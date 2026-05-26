@@ -66,12 +66,19 @@ export interface UseCollaborativeEditorConfig {
    * once when collaboration is ready (sync done, seed applied if needed).
    * Returns a destroy fn invoked on unmount or when the binding needs to
    * be torn down.
+   *
+   * May return a Promise so extensions can defer construction until their
+   * imperative API (Excalidraw, Monaco, RevoGrid, etc.) has finished
+   * mounting. Without this, an extension whose API ref-callback hasn't
+   * fired yet would either have to no-op (silently leaving the editor
+   * unbound) or block synchronously. The hook awaits the promise before
+   * registering the handle; cancellation during the await is honored.
    */
   createBinding(ctx: {
     yDoc: Y.Doc;
     awareness: import('y-protocols/awareness').Awareness;
     user: { id: string; name: string; color: string };
-  }): { destroy: () => void };
+  }): { destroy: () => void } | Promise<{ destroy: () => void }>;
 
   /**
    * Decide whether the Y.Doc still needs to be seeded from file content.
@@ -216,11 +223,27 @@ export function useCollaborativeEditor(
       }
 
       if (cancelled) return;
-      handle = cfg.createBinding({
+      const created = cfg.createBinding({
         yDoc: collab.yDoc,
         awareness: collab.awareness,
         user: collab.user,
       });
+      const resolved = created instanceof Promise ? await created : created;
+      if (cancelled) {
+        // Effect unmounted while we were awaiting the extension's
+        // imperative API. Destroy the freshly-built handle so any
+        // observers/awareness subscriptions inside it get cleaned up.
+        try {
+          resolved.destroy();
+        } catch (err) {
+          console.error(
+            '[useCollaborativeEditor] post-cancel destroy failed:',
+            err,
+          );
+        }
+        return;
+      }
+      handle = resolved;
       setBinding(handle);
     };
 

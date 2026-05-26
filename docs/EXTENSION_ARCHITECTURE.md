@@ -188,14 +188,128 @@ Extensions receive `EditorHost` and must:
 - Handle external file changes (hook does this automatically)
 - NEVER depend on parent re-rendering them
 
-## Contributing Lexical Extensions
+## Contributing to the Markdown Editor and Transcript
 
-Extensions can extend the built-in Lexical (rich-text) editor by
-shipping their own `LexicalExtension` instances. The editor reads them
-from the runtime store and includes them in its extension graph;
-toggling an extension rebuilds the editor instance.
+The markdown editor and AI transcript currently have four extension
+contribution surfaces:
 
-### Manifest
+| Surface | Call from | What it adds | Consumed by |
+| --- | --- | --- | --- |
+| `setExtensionContributions(source, contribution)` | `activate()` | Slash-picker entries, markdown transformers, dynamic picker options | Editor slash menu and markdown import/export |
+| `setExtensionLexicalExtension(source, lexicalExtension)` | `activate()` | A full Lexical extension (`nodes`, `dependencies`, `register()`, config overrides) | `NimbalystEditor` via `buildNimbalystRootExtension()` |
+| `diffHandlerRegistry.register(handler)` | `activate()` | Diff behavior for a custom Lexical node type | DiffPlugin apply/approve/reject flows |
+| `setTranscriptMarkdownContributions(source, contribution)` | Usually a host component mounted after activation | Transcript markdown plugins, `react-markdown` component overrides, transcript-only styles | `MarkdownRenderer` inside the AI transcript |
+
+### Import surface today
+
+These runtime contribution APIs are currently imported from
+`@nimbalyst/runtime`, not `@nimbalyst/extension-sdk`.
+
+That is a real API gap. The SDK does not yet re-export
+`setExtensionContributions`, `setExtensionLexicalExtension`,
+`diffHandlerRegistry`, or `setTranscriptMarkdownContributions`, and this
+docs pass does not change that. Prefer the top-level
+`@nimbalyst/runtime` imports shown below rather than deep private file
+paths.
+
+### Combined example
+
+This is the typical split for an extension that touches all four
+surfaces: activation wires the editor and diff pieces, while a host
+component owns transcript registration so it can clean itself up on
+unmount.
+
+```ts
+import { useEffect } from 'react';
+import {
+  clearTranscriptMarkdownContributions,
+  diffHandlerRegistry,
+  setExtensionContributions,
+  setExtensionLexicalExtension,
+  setTranscriptMarkdownContributions,
+} from '@nimbalyst/runtime';
+import {
+  $getSelection,
+  $insertNodes,
+  $isRangeSelection,
+  COMMAND_PRIORITY_EDITOR,
+  createCommand,
+  defineExtension,
+} from 'lexical';
+
+const EXTENSION_ID = 'com.nimbalyst.mermaid-tools';
+const INSERT_MERMAID_COMMAND = createCommand('INSERT_MERMAID');
+
+const MermaidLexicalExtension = defineExtension({
+  name: `${EXTENSION_ID}/lexical`,
+  nodes: [MermaidNode],
+  register: (editor) =>
+    editor.registerCommand(
+      INSERT_MERMAID_COMMAND,
+      (payload) => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          $insertNodes([$createMermaidNode(payload)]);
+        }
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR,
+    ),
+});
+
+class MermaidDiffHandler {
+  readonly nodeType = 'mermaid';
+  canHandle(context) { /* ... */ }
+  handleUpdate(context) { /* ... */ }
+  handleAdd(targetNode, parentNode, position, validator) { /* ... */ }
+  handleRemove(liveNode, validator) { /* ... */ }
+}
+
+export async function activate(): Promise<void> {
+  setExtensionLexicalExtension(EXTENSION_ID, MermaidLexicalExtension);
+
+  setExtensionContributions(EXTENSION_ID, {
+    markdownTransformers: [MERMAID_TRANSFORMER],
+    userCommands: [
+      {
+        title: 'Mermaid Diagram',
+        description: 'Insert a Mermaid diagram block',
+        icon: 'account_tree',
+        keywords: ['mermaid', 'diagram', 'flowchart'],
+        command: INSERT_MERMAID_COMMAND,
+      },
+    ],
+  });
+
+  diffHandlerRegistry.register(new MermaidDiffHandler());
+}
+
+export function TranscriptMermaidHost(): null {
+  useEffect(() => {
+    setTranscriptMarkdownContributions(EXTENSION_ID, {
+      components: {
+        code: TranscriptMermaidCodeBlock,
+      },
+    });
+    return () => {
+      clearTranscriptMarkdownContributions(EXTENSION_ID);
+    };
+  }, []);
+
+  return null;
+}
+
+export const hostComponents = {
+  TranscriptMermaidHost,
+};
+```
+
+### Declarative Lexical extensions via manifest
+
+If your extension can declare its Lexical contribution up front, use the
+manifest-based `contributions.lexicalExtensions` path. The extension
+loader reads named exports from your module's `lexicalExtensions` map and
+publishes them into the editor's runtime store.
 
 Declare the names of the `LexicalExtension` exports in your manifest:
 
@@ -207,16 +321,16 @@ Declare the names of the `LexicalExtension` exports in your manifest:
 }
 ```
 
-### Module exports
-
 Export each named extension from your extension's `lexicalExtensions`
-map. The SDK re-exports `defineExtension` / `configExtension` /
-`declarePeerDependency` from `@lexical/extension` so extensions don't
-need a direct dependency on the Lexical packages:
+map:
 
 ```ts
-import { defineExtension } from '@nimbalyst/extension-sdk';
-import { $insertNodes, COMMAND_PRIORITY_EDITOR, createCommand } from 'lexical';
+import {
+  $insertNodes,
+  COMMAND_PRIORITY_EDITOR,
+  createCommand,
+  defineExtension,
+} from 'lexical';
 
 const INSERT_EMOJI_COMMAND = createCommand('INSERT_EMOJI');
 
@@ -242,25 +356,19 @@ export default {
 };
 ```
 
-### What a Lexical extension can do
+A Lexical extension can:
+- Register node classes via `defineExtension({ nodes: [...] })`
+- Register commands, listeners, and transforms in `register(editor)`
+- Depend on other extensions via `dependencies: [...]`
+- Override upstream extension config via `configExtension(...)`
 
-- **Register node classes** via `defineExtension({ nodes: [...] })`. The
-  Lexical builder resolves them topologically; no other registration is
-  needed.
-- **Register commands, listeners, transforms** in `register(editor)`.
-  Returning a cleanup function disposes them when the editor tears
-  down.
-- **Depend on other extensions** via `dependencies: [...]` and
-  `configExtension(other, { ... })` to override config.
+### `setExtensionContributions()`
 
-### Contributing markdown transformers and slash-picker entries
+Use `setExtensionContributions(source, contribution)` for editor
+contributions that do not fit cleanly into the `LexicalExtension` shape.
+This registry is consumed alongside the editor extension graph.
 
-These contributions don't fit cleanly into the `LexicalExtension` shape
-and use a parallel runtime store. The SDK exposes
-`setExtensionContributions(sourceName, { userCommands, markdownTransformers })`
-for extensions that need to add slash-picker entries or markdown
-import/export transformers. Publish from your extension's activation
-function:
+Call it from your extension's `activate()` hook:
 
 ```ts
 import { setExtensionContributions } from '@nimbalyst/runtime';
@@ -276,13 +384,163 @@ setExtensionContributions('my-extension', {
     },
   ],
   markdownTransformers: [EMOJI_TRANSFORMER],
+  getDynamicOptions: async (queryString) => {
+    return searchCustomBlocks(queryString);
+  },
 });
 ```
 
-See `packages/runtime/src/editor/extensions/README.md` for the full
-runtime-side contract, including how renderer-side React UI plugins
-(typeahead menus, dialog hosts) register through
-`registerExtensionEditorComponent`.
+`EditorExtensionContributions` currently supports:
+
+| Field | Purpose |
+| --- | --- |
+| `userCommands` | Slash-picker entries shown in the markdown editor |
+| `markdownTransformers` | Markdown import/export transformers |
+| `getDynamicOptions(queryString)` | Async provider for dynamic slash-picker options |
+
+### `setExtensionLexicalExtension()`
+
+Use `setExtensionLexicalExtension(extensionId, lexicalExtension)` when an
+extension needs to contribute a full Lexical extension imperatively from
+its activation hook.
+
+The `lexicalExtension` argument is the same shape used by the built-in
+editor extensions in
+`packages/runtime/src/editor/extensions/builtin/`: typically a
+`defineExtension({ name, nodes, dependencies, register, config })`
+result, or another `AnyLexicalExtensionArgument` such as a
+`configExtension(...)` wrapper.
+
+Call it from `activate()`:
+
+```ts
+import { setExtensionLexicalExtension } from '@nimbalyst/runtime';
+
+export async function activate(): Promise<void> {
+  setExtensionLexicalExtension('my-extension', MyEmojiExtension);
+}
+```
+
+How the editor consumes it:
+- `setExtensionLexicalExtension()` writes into the runtime
+  `extensionLexicalExtensionsStore`
+- `NimbalystEditor` reads that store with
+  `useExtensionLexicalExtensions()`
+- `buildNimbalystRootExtension()` appends those contributed extensions as
+  `extensionDependencies`, after the built-in dependencies listed in
+  `NimbalystEditorExtensions.ts`
+
+Activation caveat: extension loading is async. Register Lexical
+extensions as early as possible in `activate()`. If a markdown editor
+mounts before your extension has published its nodes, that editor
+instance may need to be reopened or otherwise remounted before those
+nodes are available.
+
+### `diffHandlerRegistry.register()`
+
+Use `diffHandlerRegistry.register(new MyDiffHandler())` when your custom
+node needs node-specific diff behavior in the DiffPlugin.
+
+Handlers must match the `DiffNodeHandler` interface from
+`packages/runtime/src/editor/plugins/DiffPlugin/handlers/DiffNodeHandler.ts`:
+
+```ts
+interface DiffNodeHandler {
+  readonly nodeType: string;
+  canHandle(context): boolean;
+  handleUpdate(context): DiffHandlerResult;
+  handleAdd(targetNode, parentNode, position, validator): DiffHandlerResult;
+  handleRemove(liveNode, validator): DiffHandlerResult;
+  handleApprove?(liveNode, validator): DiffHandlerResult;
+  handleReject?(liveNode, validator): DiffHandlerResult;
+}
+```
+
+Call `register()` from `activate()`, after any custom node class or
+Lexical extension registration.
+
+Notes:
+- Built-in handlers are registered once in
+  `packages/runtime/src/editor/plugins/DiffPlugin/core/diffUtils.ts`
+- `register()` is safe to call multiple times because the registry is a
+  `Map` keyed by `nodeType`
+- Re-registering the same `nodeType` replaces the prior handler; there
+  is no `unregister()`, so avoid accidental double-registration
+- `packages/runtime/src/editor/plugins/DiffPlugin/handlers/MermaidDiffHandler.ts`
+  is the simplest concrete example to copy
+
+### `setTranscriptMarkdownContributions()`
+
+Use `setTranscriptMarkdownContributions(extensionId, contribution)` to
+extend the AI transcript / chat markdown renderer.
+
+This is the path for transcript-only rendering like "turn fenced
+`language-mermaid` blocks into a live diagram widget" or "enable a new
+remark/rehype plugin chain for chat messages".
+
+`TranscriptMarkdownContribution` supports:
+
+| Field | Purpose |
+| --- | --- |
+| `remarkPlugins?: ReadonlyArray<unknown>` | Extra `react-markdown` remark plugins |
+| `rehypePlugins?: ReadonlyArray<unknown>` | Extra `react-markdown` rehype plugins |
+| `components?: Readonly<Record<string, ComponentType<any>>>` | `react-markdown` component overrides |
+| `styles?: ReadonlyArray<{ type: 'css-text' \| 'stylesheet'; id: string; ... }>` | Transcript-only CSS text or stylesheet links |
+
+Important behavior:
+- Overriding `components.code` is the standard way to intercept specific
+  fenced languages and render them as widgets
+- Contributions are merged in registration order; last contributor wins
+  when two contributors provide the same component key
+- Styles are deduplicated by `id` and removed when the contributor clears
+  its registration
+
+The transcript registry is usually best owned by a host component so it
+can register on mount and clean itself up on unmount:
+
+```ts
+import { useEffect } from 'react';
+import {
+  clearTranscriptMarkdownContributions,
+  setTranscriptMarkdownContributions,
+} from '@nimbalyst/runtime';
+
+const SOURCE = 'com.nimbalyst.math';
+
+export function TranscriptMathHost(): null {
+  useEffect(() => {
+    setTranscriptMarkdownContributions(SOURCE, {
+      remarkPlugins: [remarkMath],
+      rehypePlugins: [[rehypeKatex, KATEX_SAFE_OPTIONS]],
+      components: {
+        code: TranscriptMathCode,
+      },
+    });
+
+    return () => {
+      clearTranscriptMarkdownContributions(SOURCE);
+    };
+  }, []);
+
+  return null;
+}
+```
+
+Desktop vs. mobile today:
+- Desktop uses these contributions fully. The Electron extension host
+  exposes the transcript registry on `@nimbalyst/runtime`, and host
+  components can register transcript contributions normally.
+- iOS and Android transcript bundles both use the shared runtime
+  `AgentTranscriptPanel` / `MarkdownRenderer`, so the renderer code does
+  understand transcript markdown contributions.
+- However, the mobile apps do not currently load desktop extensions or
+  mount extension host components, so extension-provided transcript
+  markdown contributions are effectively desktop-only today unless a
+  mobile-specific registration path is added.
+
+See `packages/runtime/src/editor/extensions/README.md` for the editor
+composition contract and `packages/runtime/src/ui/AgentTranscript/contributions/`
+for the transcript-side registry implementation.
 
 ## AI Completion API
 

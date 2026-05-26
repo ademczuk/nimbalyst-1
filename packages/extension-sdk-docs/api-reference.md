@@ -36,12 +36,49 @@ interface ExtensionModule {
 
   nodes?: Record<string, unknown>;
   transformers?: Record<string, unknown>;
+  lexicalExtensions?: Record<string, unknown>;
   hostComponents?: Record<string, React.ComponentType>;
 
   panels?: Record<string, PanelExport>;
   settingsPanel?: Record<string, React.ComponentType<SettingsPanelProps>>;
 }
 ```
+
+### Editor and Transcript Contribution Points
+
+Extensions can contribute to the built-in markdown editor and transcript
+renderer through four surfaces:
+
+| Surface | Typical export style | Use for |
+| --- | --- | --- |
+| `setExtensionContributions()` | Usually declarative `nodes` / `transformers` / `slashCommands`; imperative fallback available | Slash-picker entries, markdown transformers, dynamic picker options |
+| `setExtensionLexicalExtension()` | Usually declarative `lexicalExtensions`; imperative fallback available | Full Lexical extensions |
+| `diffHandlerRegistry.register()` | Imperative | Diff behavior for custom node types |
+| `setTranscriptMarkdownContributions()` | Usually from `hostComponents` | Transcript markdown plugins and widget rendering |
+
+Preferred path:
+
+- Declare `contributions.nodes`, `contributions.transformers`,
+  `contributions.lexicalExtensions`, and `contributions.hostComponents`
+  in `manifest.json`
+- Export matching values from `module.nodes`, `module.transformers`,
+  `module.lexicalExtensions`, and `module.hostComponents`
+- Use the imperative runtime APIs only when registration must happen
+  conditionally at activation time
+
+```ts
+export const nodes = { MermaidNode };
+export const transformers = { MERMAID_TRANSFORMER };
+export const lexicalExtensions = { MermaidLexicalExtension };
+export const hostComponents = { TranscriptMermaidHost };
+
+export async function activate() {
+  diffHandlerRegistry.register(new MermaidDiffHandler());
+}
+```
+
+See [contribution-points.md](./contribution-points.md) for the full
+guide and code examples.
 
 ## `ExtensionContext`
 
@@ -456,6 +493,7 @@ interface ExtensionContributions {
   slashCommands?: SlashCommandContribution[];
   nodes?: string[];
   transformers?: string[];
+  lexicalExtensions?: string[];
   hostComponents?: string[];
   configuration?: ExtensionConfigurationContribution;
   claudePlugin?: ClaudePluginContribution;

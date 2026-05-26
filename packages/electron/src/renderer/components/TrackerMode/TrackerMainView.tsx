@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { FloatingPortal } from '@floating-ui/react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
@@ -36,6 +37,8 @@ import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { defaultAgentModelAtom } from '../../store/atoms/appSettings';
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
 import { store } from '../../store';
+import { useFloatingMenu } from '../../hooks/useFloatingMenu';
+import { buildTrackerTagOptions, filterTrackerItemsByTags } from './trackerTagFilterUtils';
 
 export type ViewMode = 'list' | 'table' | 'kanban';
 
@@ -61,7 +64,12 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const [sortBy, setSortBy] = useState<TrackerSortColumn>('lastIndexed');
   const [sortDirection, setSortDirection] = useState<TrackerSortDirection>('desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [quickAddType, setQuickAddType] = useState<string | null>(null);
+  const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
+  const [highlightedTagIndex, setHighlightedTagIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // User's selected default model. Used by handleLaunchSession so the new
   // session uses the workspace's configured provider rather than always
@@ -249,7 +257,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const archivedItems = useAtomValue(archivedTrackerItemsAtom(filterType));
 
   // Apply multi-select filters as intersection
-  const filteredItems = useMemo(() => {
+  const baseFilteredItems = useMemo(() => {
     const showArchived = activeFilters.includes('archived');
     let items = showArchived ? archivedItems : activeItems;
 
@@ -284,6 +292,48 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
 
     return items;
   }, [activeItems, archivedItems, activeFilters, currentIdentity]);
+
+  const allTags = useMemo(() => buildTrackerTagOptions(baseFilteredItems), [baseFilteredItems]);
+
+  const filteredTagOptions = useMemo(() => {
+    const activeSet = new Set(tagFilter);
+    const query = tagQuery.toLowerCase();
+    return allTags
+      .filter((tag) => !activeSet.has(tag.name))
+      .filter((tag) => !query || tag.name.toLowerCase().includes(query));
+  }, [allTags, tagFilter, tagQuery]);
+
+  const filteredItems = useMemo(() => {
+    return filterTrackerItemsByTags(baseFilteredItems, tagFilter);
+  }, [baseFilteredItems, tagFilter]);
+
+  const tagMenu = useFloatingMenu({
+    placement: 'bottom-start',
+    open: showTagDropdown,
+    onOpenChange: setShowTagDropdown,
+  });
+
+  const setSearchInputNode = useCallback((node: HTMLInputElement | null) => {
+    searchInputRef.current = node;
+    tagMenu.refs.setReference(node);
+  }, [tagMenu.refs]);
+
+  const addTagFilter = useCallback((tag: string) => {
+    setTagFilter((current) => current.includes(tag) ? current : [...current, tag]);
+    setTagQuery('');
+    setShowTagDropdown(false);
+    setHighlightedTagIndex(0);
+  }, []);
+
+  const removeTagFilter = useCallback((tag: string) => {
+    setTagFilter((current) => current.filter((candidate) => candidate !== tag));
+  }, []);
+
+  useEffect(() => {
+    if (!showTagDropdown) {
+      setHighlightedTagIndex(0);
+    }
+  }, [showTagDropdown]);
 
   // Pre-warm body Y.Docs for visible team-synced items so detail-open
   // hits a warm WebSocket + Y.Doc state (phase 4a of the tracker sync
@@ -536,21 +586,144 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
             className="absolute left-2 top-1/2 -translate-y-1/2 text-nim-faint pointer-events-none"
           />
           <input
+            ref={setSearchInputNode}
             type="text"
-            placeholder="Search items..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-7 pr-2 py-1 text-xs bg-nim-secondary border border-nim rounded text-nim placeholder:text-nim-faint focus:outline-none focus:border-[var(--nim-primary)]"
+            placeholder="Search or type # to filter by tag..."
+            value={showTagDropdown
+              ? (searchQuery ? searchQuery + ' ' : '') + '#' + tagQuery
+              : searchQuery}
+            onChange={(e) => {
+              const value = e.target.value;
+              const hashIndex = value.lastIndexOf('#');
+
+              if (hashIndex >= 0) {
+                setSearchQuery(value.slice(0, hashIndex).trim());
+                setTagQuery(value.slice(hashIndex + 1));
+                setShowTagDropdown(true);
+                setHighlightedTagIndex(0);
+                return;
+              }
+
+              setSearchQuery(value);
+              setTagQuery('');
+              setShowTagDropdown(false);
+            }}
+            onKeyDown={(e) => {
+              if (showTagDropdown) {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowTagDropdown(false);
+                  setTagQuery('');
+                  return;
+                }
+                if (e.key === 'Backspace' && tagQuery.length === 0) {
+                  e.preventDefault();
+                  setShowTagDropdown(false);
+                  return;
+                }
+                if (filteredTagOptions.length === 0) {
+                  return;
+                }
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setHighlightedTagIndex((current) => Math.min(current + 1, filteredTagOptions.length - 1));
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setHighlightedTagIndex((current) => Math.max(current - 1, 0));
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  addTagFilter(filteredTagOptions[highlightedTagIndex].name);
+                  return;
+                }
+              }
+
+              if (e.key === 'Backspace' && searchQuery.length === 0 && tagFilter.length > 0) {
+                e.preventDefault();
+                removeTagFilter(tagFilter[tagFilter.length - 1]);
+              }
+            }}
+            onFocus={() => {
+              if (tagQuery) {
+                setShowTagDropdown(true);
+              }
+            }}
+            className="w-full pl-7 pr-7 py-1 text-xs bg-nim-secondary border border-nim rounded text-nim placeholder:text-nim-faint focus:outline-none focus:border-[var(--nim-primary)]"
+            aria-label="Search trackers or filter by tag"
           />
-          {searchQuery && (
+          {(searchQuery || tagFilter.length > 0 || showTagDropdown) && (
             <button
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-nim-faint hover:text-nim"
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setTagQuery('');
+                setShowTagDropdown(false);
+                setTagFilter([]);
+              }}
             >
               <MaterialSymbol icon="close" size={14} />
             </button>
           )}
         </div>
+
+        {showTagDropdown && (
+          <FloatingPortal>
+            <div
+              ref={tagMenu.refs.setFloating}
+              style={{
+                ...tagMenu.floatingStyles,
+                width: searchInputRef.current?.offsetWidth,
+              }}
+              className="bg-nim-secondary border border-nim rounded shadow-lg z-[100] overflow-y-auto"
+              data-testid="tracker-tag-dropdown"
+              {...tagMenu.getFloatingProps()}
+            >
+              {filteredTagOptions.length > 0 ? (
+                filteredTagOptions.slice(0, 15).map((tag, index) => (
+                  <button
+                    key={tag.name}
+                    type="button"
+                    className={`w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between cursor-pointer transition-colors ${
+                      index === highlightedTagIndex
+                        ? 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)]'
+                        : 'text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-tertiary)]'
+                    }`}
+                    onMouseEnter={() => setHighlightedTagIndex(index)}
+                    onClick={() => addTagFilter(tag.name)}
+                  >
+                    <span>#{tag.name}</span>
+                    <span className="text-[var(--nim-text-faint)] text-[11px] tabular-nums">{tag.count}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-[12px] text-[var(--nim-text-faint)] italic">
+                  {tagQuery ? 'No matching tags' : 'No tags in these trackers yet'}
+                </div>
+              )}
+            </div>
+          </FloatingPortal>
+        )}
+
+        {tagFilter.length > 0 && (
+          <div className="flex flex-wrap gap-1 shrink-0" data-testid="tracker-tag-chips">
+            {tagFilter.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border cursor-pointer bg-blue-400/[0.12] border-blue-400/30 text-blue-400 hover:bg-blue-400/[0.18]"
+                onClick={() => removeTagFilter(tag)}
+                title={`Remove #${tag} filter`}
+                data-testid={`tracker-tag-chip-${tag}`}
+              >
+                #{tag}
+                <MaterialSymbol icon="close" size={12} />
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex-1" />
 

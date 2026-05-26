@@ -388,15 +388,31 @@ Register selectable themes contributed by your extension.
 ]
 ```
 
-### `nodes`, `transformers`, and `hostComponents`
+### `nodes`, `transformers`, `lexicalExtensions`, and `hostComponents`
 
 These contribution arrays declare names of exports provided by your module.
 
 ```json
 "nodes": ["MyLexicalNode"],
 "transformers": ["myMarkdownTransformer"],
+"lexicalExtensions": ["MyLexicalExtension"],
 "hostComponents": ["MyFloatingToolbar"]
 ```
+
+Use these with matching module exports:
+
+- `nodes` -> `export const nodes = { ... }`
+- `transformers` -> `export const transformers = { ... }`
+- `lexicalExtensions` -> `export const lexicalExtensions = { ... }`
+- `hostComponents` -> `export const hostComponents = { ... }`
+
+This is the preferred way to contribute to the built-in markdown editor
+and transcript renderer. The host reads these exports and wires them into
+the runtime registries automatically.
+
+See [contribution-points.md](./contribution-points.md) for examples of
+when to use the declarative manifest path versus the imperative runtime
+APIs.
 
 ## Complete Example
 

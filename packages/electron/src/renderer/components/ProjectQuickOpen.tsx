@@ -9,6 +9,13 @@ interface ProjectItem {
   isCurrent: boolean;
 }
 
+interface RecentWorkspaceItem {
+  path: string;
+  name?: string;
+  timestamp?: number;
+  lastOpened?: number;
+}
+
 interface ProjectQuickOpenProps {
   isOpen: boolean;
   onClose: () => void;
@@ -33,13 +40,13 @@ export const ProjectQuickOpen: React.FC<ProjectQuickOpenProps> = ({
 
     const loadProjects = async () => {
       const [recentWorkspaces, openPaths] = await Promise.all([
-        window.electronAPI.workspaceManager.getRecentWorkspaces(),
+        window.electronAPI.invoke('get-recent-workspaces') as Promise<RecentWorkspaceItem[]>,
         window.electronAPI.workspaceManager.getOpenWorkspaces(),
       ]);
 
       const openSet = new Set(openPaths);
 
-      const items: ProjectItem[] = recentWorkspaces.map((ws: any) => ({
+      const items: ProjectItem[] = recentWorkspaces.map((ws) => ({
         path: ws.path,
         name: ws.name || ws.path.split('/').pop() || ws.path,
         lastOpened: ws.lastOpened || ws.timestamp,
