@@ -5,7 +5,7 @@
     {
       "id": "gemini-cli",
       "name": "Google Gemini (CLI)",
-      "description": "Google Gemini agent via the gemini CLI (ACP protocol, OAuth). Installs as a marketplace extension and registers the gemini-cli provider.",
+      "description": "Google Gemini agent via the gemini CLI (ACP protocol, OAuth). Installs as a marketplace extension and registers the gemini-cli provider. Requires the `gemini` CLI (`npm i -g @google/gemini-cli`) to be on PATH and signed in once.",
       "version": "1.0.0",
       "author": "Nimbalyst",
       "categories": [
@@ -66,12 +66,13 @@
       "repositoryUrl": "",
       "changelog": "Initial release as marketplace extension.",
       "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",
-      "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Includes both a chat provider for one-shot prompts and an agent provider with tool-loop support. Authentication uses your existing ~/.gemini OAuth login - no API key required.",
+      "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Adds two providers to Nimbalyst: a chat provider for one-shot prompts and an agent provider with tool-loop support.\n\nPrerequisites: install the Antigravity IDE from Google and sign in once so the ~/.gemini OAuth token is on disk. Nimbalyst never runs the browser sign-in flow itself and does not store an API key; it simply attaches to the local Antigravity language server using your existing login. If the IDE is not installed or no ~/.gemini login is present, the provider's Test Connection will report exactly what is missing.",
       "highlights": [
         "Gemini 3.5 Flash (High / Medium / Low) via the local Antigravity language server",
         "Agent provider with tool-loop and meta-agent mode",
         "Account credits and per-model quota in the settings panel",
-        "Auth rides your existing ~/.gemini login"
+        "Auth rides your existing ~/.gemini login - no API key entered in Nimbalyst",
+        "Requires the Antigravity IDE to be installed and signed in at least once"
       ],
       "local": true
     },
