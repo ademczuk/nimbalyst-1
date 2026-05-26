@@ -1447,12 +1447,25 @@ export async function initAIProviderSettings(): Promise<AIProviderSettings> {
   const providers = { ...defaultProviders };
   const apiKeys = { ...defaultApiKeys };
 
-  // Merge loaded provider settings
+  // Merge loaded provider settings. CRITICAL: accept ANY key from the disk,
+  // not just keys present in `defaultProviders`. Extension-contributed providers
+  // (gemini-cli, antigravity-gemini, antigravity-gemini-agent) live in the
+  // store after their extension activates via aiSaveSettings, but they are NOT
+  // in `defaultProviders` (which only seeds built-ins). The previous
+  // `if (providers[key])` guard silently dropped them every time this function
+  // ran, including on each `ai-settings:changed` broadcast from main, so the
+  // atom kept reverting to enabled:false for those providers even though the
+  // disk had enabled:true. That made the Settings toggle visually unstick and
+  // the AntigravityUsageIndicator stay hidden (CLA-185 root cause).
   if (settings?.providerSettings) {
     Object.entries(settings.providerSettings).forEach(([key, value]: [string, any]) => {
-      if (providers[key]) {
-        providers[key] = { ...providers[key], ...value };
-      }
+      // ProviderConfig.models is `string[]` (array of model IDs the user
+      // enabled), not an object. Using an object default here was the cause
+      // of "m.includes is not a function" because downstream panels do
+      // `config.models?.includes(model.id)`. Default to undefined for the
+      // optional fields; the disk value (if any) is merged on top.
+      const base = providers[key] ?? { enabled: false, testStatus: 'idle' as const };
+      providers[key] = { ...base, ...value };
     });
   }
 
