@@ -264,6 +264,12 @@ export class MessageStreamingHandler {
     sessionId?: string,
     workspacePath?: string,
   ) => {
+    // Single entry log so we can confirm the IPC reached this handler. Previously,
+    // when antigravity-gemini-agent silently produced no response, there was no
+    // way to tell whether the IPC arrived at all -- the first existing log only
+    // fired hundreds of lines deeper inside the happy path.
+    logger.main.info(`[AIService] ai:sendMessage entry: sessionId=${sessionId} messageLen=${message.length} workspacePath=${workspacePath ?? 'unset'} hasDocCtx=${!!documentContext}`);
+
     // Check for queued prompt deduplication - prevents duplicate execution from multiple renderer panels
     const queuedPromptId = (documentContext as any)?.queuedPromptId as string | undefined;
     if (queuedPromptId) {

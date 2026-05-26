@@ -148,7 +148,9 @@ export class AntigravityToolLoopProtocol {
       if (this.aborted) return;
 
       const prompt = this.renderPrompt(fullSystemPrompt);
+      console.log(`[AntigravityToolLoopProtocol] iter=${iteration} calling getModelResponse: promptLen=${prompt.length} modelKey=${this.modelKey} historyLen=${this.history.length}`);
       const response = await this.server.getModelResponse(prompt, this.modelKey, timeoutMs);
+      console.log(`[AntigravityToolLoopProtocol] iter=${iteration} got response: responseLen=${response.length} preview=${JSON.stringify(response.slice(0, 120))}`);
 
       if (this.aborted) return;
 

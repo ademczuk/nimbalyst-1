@@ -129,6 +129,11 @@ export class AntigravityAgentProvider extends BaseAgentProvider {
       this.abortController = new AbortController();
     }
 
+    // Diagnostic entry log so we can see this provider's sendMessage is reached.
+    // Without this, the silent no-response bug was indistinguishable from the IPC
+    // never arriving at the provider.
+    console.log(`[AntigravityAgentProvider] sendMessage entry: sessionId=${sessionId} modelKey=${this.modelKey} messageLen=${message.length}`);
+
     try {
       // Log the incoming user message.
       if (sessionId) {
@@ -162,6 +167,8 @@ export class AntigravityAgentProvider extends BaseAgentProvider {
       const tools = allowedSet
         ? allTools.filter(t => allowedSet.has(t.function.name))
         : allTools;
+
+      console.log(`[AntigravityAgentProvider] meta-agent=${isMetaAgent} allTools=${allTools.length} filteredTools=${tools.length} systemPromptLen=${systemPrompt.length}`);
 
       // Emit prompt additions for the UI (mirrors LMStudioProvider / AntigravityProvider).
       const { userMessageAddition, messageWithContext } = buildUserMessageAddition(
@@ -199,6 +206,7 @@ export class AntigravityAgentProvider extends BaseAgentProvider {
       // Run the tool loop.
       let finalText = '';
       let toolCallSeq = 0;
+      let sawText = false;
       const lastToolResult = new Map<string, { id: string; name: string; args: Record<string, unknown> }>();
       for await (const step of this.toolLoop.run(
         userTurn,
@@ -239,16 +247,34 @@ export class AntigravityAgentProvider extends BaseAgentProvider {
           }
         } else if (step.type === 'text') {
           finalText = step.content;
-          if (finalText) {
-            yield { type: 'text', content: finalText };
-          }
+          sawText = true;
+          console.log(`[AntigravityAgentProvider] received text step: len=${finalText.length} preview=${JSON.stringify(finalText.slice(0, 120))}`);
+          // ALWAYS yield a text chunk so the renderer's stream pipeline registers
+          // the assistant's response. Dropping empty text chunks was the root
+          // cause of the silent no-response bug: when GetModelResponse returns
+          // whitespace or empty (which Gemini 3.5 Flash occasionally does on long
+          // meta-agent system prompts with no tool calls available), the original
+          // `if (finalText)` guard suppressed the chunk entirely and the renderer
+          // never received `ai:streamResponse`, leaving the chat input "waiting".
+          // Substitute a visible placeholder when empty so the user sees that the
+          // turn completed.
+          const renderedText = finalText.trim().length === 0
+            ? '(model returned no text)'
+            : finalText;
+          yield { type: 'text', content: renderedText };
         } else if (step.type === 'complete') {
-          // Log the assistant's final output.
-          if (sessionId && finalText) {
-            await this.logAgentMessage(sessionId, PROVIDER_ID, 'output', finalText,
+          // Log the assistant's final output. Persist the rendered text (which
+          // includes the placeholder when the model produced nothing) so the
+          // transcript on reload mirrors what the user saw during the turn.
+          const persistedText = finalText.trim().length === 0
+            ? (sawText ? '(model returned no text)' : '(no model response)')
+            : finalText;
+          if (sessionId) {
+            await this.logAgentMessage(sessionId, PROVIDER_ID, 'output', persistedText,
               undefined, false, undefined, true);
           }
-          yield { type: 'complete', content: finalText, isComplete: true };
+          console.log(`[AntigravityAgentProvider] sendMessage complete: sawText=${sawText} finalTextLen=${finalText.length} persistedLen=${persistedText.length}`);
+          yield { type: 'complete', content: persistedText, isComplete: true };
         }
       }
     } catch (err: any) {
