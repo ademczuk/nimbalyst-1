@@ -2815,6 +2815,32 @@ export class AIService {
         }
       }
 
+      // Broadcast the change so other renderer windows refresh their atoms.
+      // Without this, an extension's runActivationEnable() write lands in the
+      // electron-store on disk but the renderer's aiProviderSettingsAtom keeps
+      // its stale in-memory copy, leaving the Settings UI toggle visually
+      // unchecked even though enabled:true is persisted. The renderer's
+      // aiSettingsListeners subscribe to this channel and call aiGetSettings()
+      // to refresh the atom.
+      try {
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+          if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+            win.webContents.send('ai-settings:changed', {
+              providerIds: settings.providerSettings ? Object.keys(settings.providerSettings) : [],
+              apiKeyNames: settings.apiKeys ? Object.keys(settings.apiKeys) : [],
+            });
+          }
+        }
+      } catch (broadcastErr) {
+        // Broadcast is best-effort; failure should not block the save.
+        logger.main.warn(
+          `[AIService] ai-settings:changed broadcast failed: ${
+            broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr)
+          }`,
+        );
+      }
+
       return { success: true };
     });
 

@@ -94,6 +94,7 @@ import {
 import { initOpenProjects } from './store/atoms/openProjects';
 import { initWorkspaceStatePruner } from './store/workspaceStatePruner';
 import { initAiCommandListeners } from './store/listeners/aiCommandListeners';
+import { initAiSettingsListeners } from './store/listeners/aiSettingsListeners';
 import { initAppCommandListeners } from './store/listeners/appCommandListeners';
 import { initClaudeUsageListeners } from './store/listeners/claudeUsageListeners';
 import { initCodexUsageListeners } from './store/listeners/codexUsageListeners';
@@ -284,6 +285,7 @@ export default function App() {
     initWorkspaceStatePruner();
 
     const cleanupAiCommands = initAiCommandListeners();
+    const cleanupAiSettings = initAiSettingsListeners();
     const cleanupAppCommands = initAppCommandListeners();
     const cleanupClaude = initClaudeUsageListeners();
     const cleanupCodex = initCodexUsageListeners();
@@ -306,6 +308,7 @@ export default function App() {
     initNetworkAvailabilityListeners();
     return () => {
       cleanupAiCommands?.();
+      cleanupAiSettings?.();
       cleanupAppCommands?.();
       cleanupClaude?.();
       cleanupCodex?.();
