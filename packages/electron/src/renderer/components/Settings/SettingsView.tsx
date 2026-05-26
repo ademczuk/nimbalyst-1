@@ -200,6 +200,31 @@ export function SettingsView({
     loadSettings();
   }, []);
 
+  // Re-fetch model catalog when an extension-contributed provider transitions
+  // from disabled/uninstalled to enabled. Without this, the Agent Providers
+  // panel for antigravity-gemini-agent shows "No models found" forever after
+  // first install: loadSettings() ran at mount when the provider was disabled,
+  // got no models, and there was no second trigger to re-fetch once the
+  // extension's runActivationEnable flipped it on (Bug H).
+  //
+  // We watch providers[selectedCategory]?.enabled. The atom is now reactive to
+  // ai-settings:changed broadcasts from main, so a successful enable flips
+  // this dependency and the effect fires a fresh aiGetAllModels(). The fetch
+  // is cheap; ModelRegistry caches per-provider so the network/IPC cost is
+  // bounded.
+  const selectedProviderEnabled = providers[selectedCategory]?.enabled === true;
+  const selectedProviderHasModels = (availableModels[selectedCategory]?.length ?? 0) > 0;
+  useEffect(() => {
+    if (!selectedProviderEnabled) return;
+    if (selectedProviderHasModels) return;
+    if (loading[selectedCategory]) return;
+    void fetchModels(selectedCategory);
+    // We intentionally depend on selectedProviderEnabled (the boolean) rather
+    // than the full providers map so unrelated provider toggles don't refire.
+    // selectedProviderHasModels keeps us idempotent once the fetch lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory, selectedProviderEnabled, selectedProviderHasModels]);
+
   // Check if workspace has MCP servers (for indicator on Project tab when in global scope)
   useEffect(() => {
     const checkWorkspaceMcpServers = async () => {
