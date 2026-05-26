@@ -123,6 +123,17 @@ function setupExtensionDevListeners(): void {
         // But we'll call them explicitly to ensure the bridges are updated
         syncExtensionEditors();
         syncExtensionDocumentHeaders();
+        // CRITICAL: a marketplace install fires dev-reload, but
+        // initializeAiProviderBridge() only ran at app startup. Without re-
+        // running it here, the extension's aiProviders contributions never
+        // land in ProviderRegistry (renderer or main), so ai:sendMessage with
+        // the contributed provider id throws "Unknown provider: <id>". Re-run
+        // the bridge so newly-installed providers register immediately.
+        // AWAIT so main has the descriptor before any user action can fire
+        // ai:sendMessage / ai:testConnection -- without the await, the auto-
+        // test queued from the extension's activate() can land before main's
+        // registry has the descriptor and falsely report "Unknown provider".
+        await initializeAiProviderBridge();
       } else {
         console.error(`[ExtensionSystem] Failed to reload extension ${data.extensionId}: ${result.error}`);
       }
@@ -137,11 +148,35 @@ function setupExtensionDevListeners(): void {
 
     try {
       const loader = getExtensionLoader();
+      // Find which provider ids belong to this extension BEFORE unload, so
+      // we can unregister them from both registries afterward. The loader's
+      // getAiProviders() returns [] for unloaded extensions, so we must
+      // capture this snapshot first.
+      const aiProviderIds = loader
+        .getAiProviders()
+        .filter((entry) => entry.extensionId === data.extensionId)
+        .map((entry) => entry.contribution.id);
+
       await loader.unloadExtension(data.extensionId);
       console.log(`[ExtensionSystem] Successfully unloaded extension ${data.extensionId}`);
       // The ExtensionLoader notifies listeners, which triggers sync functions
       syncExtensionEditors();
       syncExtensionDocumentHeaders();
+
+      // Unregister any AI provider descriptors this extension contributed,
+      // in both renderer and main registries. Without this, an uninstalled
+      // extension's provider id stays in ProviderRegistry forever and the
+      // session loop will try to construct an ExtensionProviderProxy that
+      // has no live renderer impl to delegate turns to.
+      if (aiProviderIds.length > 0) {
+        for (const id of aiProviderIds) {
+          ProviderRegistry.unregister(id);
+          void window.electronAPI.invoke('ext-provider:unregister', id);
+        }
+        console.log(
+          `[ExtensionSystem] Unregistered ${aiProviderIds.length} AI provider(s) for ${data.extensionId}: ${aiProviderIds.join(', ')}`,
+        );
+      }
     } catch (error) {
       console.error(`[ExtensionSystem] Error unloading extension ${data.extensionId}:`, error);
     }
@@ -632,9 +667,16 @@ export function setExtensionWorkspacePath(workspacePath: string | null): void {
  * so the provider shows up in model pickers and chat/agent allowlists. The
  * heavy factories (createInstance/getModels) live in the main process and are
  * wired by a separate stream; they are intentionally omitted here.
+ *
+ * Returns a Promise that resolves once main has acknowledged every
+ * ext-provider:register IPC. Callers that drive a marketplace install flow
+ * SHOULD await this before issuing ai:sendMessage / ai:testConnection; a
+ * fire-and-forget caller risks a "Unknown provider: <id>" race where the
+ * user's first action lands before main's registry is populated.
  */
-export function initializeAiProviderBridge(): void {
+export async function initializeAiProviderBridge(): Promise<void> {
   const loader = getExtensionLoader();
+  const registrations: Promise<unknown>[] = [];
   for (const { contribution } of loader.getAiProviders()) {
     const descriptor: ProviderDescriptor = {
       id: contribution.id,
@@ -654,8 +696,9 @@ export function initializeAiProviderBridge(): void {
     // (ProviderFactory.createProvider) can construct an ExtensionProviderProxy
     // that delegates turns back here. Renderer registers metadata-only; main
     // attaches the proxy factory.
-    void window.electronAPI.invoke('ext-provider:register', descriptor);
+    registrations.push(window.electronAPI.invoke('ext-provider:register', descriptor));
   }
+  await Promise.all(registrations);
 }
 
 /**
@@ -779,7 +822,9 @@ export async function registerExtensionSystem(): Promise<void> {
 
     // Register extension-contributed AI providers as metadata-only descriptors
     // so they appear in the renderer ProviderRegistry (model pickers, allowlists).
-    initializeAiProviderBridge();
+    // Await so the main-side registry is populated before the UI is allowed
+    // to call ai:sendMessage with a contributed provider id.
+    await initializeAiProviderBridge();
 
     // Wire the renderer half of the extension-provider turn bridge so the
     // main-process proxy can delegate turns to renderer-resident impls.
