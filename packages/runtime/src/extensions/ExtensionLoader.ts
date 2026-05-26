@@ -1013,16 +1013,35 @@ export class ExtensionLoader {
   private listeners = new Set<() => void>();
 
   /**
-   * Discover all extensions in both user and built-in extensions directories
+   * Discover all extensions in both user and built-in extensions directories.
+   *
+   * The platform service returns directories with the USER extensions
+   * directory first and any BUILT-IN dirs after it. Extensions whose ID
+   * matches a bundled .nimext package (see getBundledOnlyExtensionIds) are
+   * MARKETPLACE-ONLY: they may load from the user dir (because the user
+   * explicitly installed them via Marketplace) but must NOT auto-discover
+   * from the built-in dir, even when a development checkout has a sibling
+   * source folder under `packages/extensions/`. This prevents bundled
+   * marketplace extensions from appearing pre-installed.
    */
   async discoverExtensions(): Promise<DiscoveredExtension[]> {
     const platformService = getExtensionPlatformService();
     const extensionsDirs = await platformService.getAllExtensionsDirectories();
 
+    // The first entry is the USER extensions dir; everything after is
+    // BUILT-IN. The bundled-only filter only applies to built-in scans.
+    const userDir = extensionsDirs[0];
+    const bundledOnlyIds = new Set<string>(
+      platformService.getBundledOnlyExtensionIds
+        ? await platformService.getBundledOnlyExtensionIds().catch(() => [] as string[])
+        : []
+    );
+
     const discovered: DiscoveredExtension[] = [];
     const seenIds = new Set<string>();
 
     for (const extensionsDir of extensionsDirs) {
+      const isBuiltinDir = extensionsDir !== userDir;
       try {
         const subdirs = await platformService.listDirectories(extensionsDir);
 
@@ -1060,6 +1079,18 @@ export class ExtensionLoader {
               // );
               continue;
             }
+
+            // Marketplace-only extensions never auto-load from built-in dirs.
+            // The user must install them explicitly through the Marketplace,
+            // which copies the .nimext into the user extensions dir (handled
+            // above as the first dir scanned, so user installs win).
+            if (isBuiltinDir && bundledOnlyIds.has(validationResult.id)) {
+              console.info(
+                `[ExtensionLoader] Skipping bundled marketplace extension ${validationResult.id} from built-in dir (install via Marketplace to enable)`
+              );
+              continue;
+            }
+
             seenIds.add(validationResult.id);
 
             // Check if extension should be visible for the current release channel

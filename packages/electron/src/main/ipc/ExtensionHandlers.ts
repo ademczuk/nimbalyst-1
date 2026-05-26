@@ -207,11 +207,25 @@ async function getBuiltinExtensionsDirectory(): Promise<string | null> {
 
 /**
  * Get all extension directories (both user and built-in).
+ *
+ * CONTRACT: The USER extensions directory is always the FIRST entry.
+ * Renderer's ExtensionLoader.discoverExtensions relies on this ordering to
+ * (a) let user-installed copies win on ID conflicts and (b) skip bundled
+ * MARKETPLACE-ONLY extensions when scanning built-in dirs (see
+ * `extensions:get-bundled-only-ids` and `getBundledOnlyExtensionIds`).
+ *
+ * Bundled .nimext packages (e.g. gemini-cli, gemini-antigravity) ship in
+ * `resources/bundled-extensions/` and appear as INSTALLABLE in the Marketplace
+ * grid. They do NOT auto-load from the built-in extensions directory; the
+ * user must explicitly install them via Marketplace, which copies the
+ * .nimext into the user dir (where it then loads normally). This prevents
+ * marketplace extensions from appearing pre-installed simply because the
+ * development checkout has a sibling source folder under `packages/extensions/`.
  */
 export async function getAllExtensionDirectories(): Promise<string[]> {
   const dirs: string[] = [];
 
-  // Always include user extensions directory
+  // Always include user extensions directory FIRST so it wins on ID conflicts.
   dirs.push(await getUserExtensionsDirectory());
 
   // Include built-in extensions if available

@@ -94,6 +94,17 @@ export interface ExtensionPlatformService {
    * @returns true if the extension should be visible, false otherwise
    */
   isExtensionVisibleForChannel(requiredChannel: string | undefined): Promise<boolean>;
+
+  /**
+   * Get the list of extension IDs that ship as bundled marketplace packages
+   * (`.nimext` files in the app resources). These IDs must NOT be auto-loaded
+   * from the BUILT-IN extensions directory even if a development checkout
+   * happens to have a sibling source folder; they are marketplace-only and
+   * only load when the user installs them into the user extensions directory.
+   *
+   * Implementations on platforms without a marketplace can return [].
+   */
+  getBundledOnlyExtensionIds?(): Promise<string[]>;
 }
 
 // ============================================================================

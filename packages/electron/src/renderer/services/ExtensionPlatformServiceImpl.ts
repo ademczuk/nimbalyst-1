@@ -513,4 +513,23 @@ CHECK:
 
     return electronAPI.invoke('extensions:is-visible-for-channel', requiredChannel);
   }
+
+  /**
+   * Get the IDs of extensions that ship as bundled .nimext packages and must
+   * NOT be auto-loaded from the built-in extensions dir. Returns [] if the
+   * IPC bridge is unavailable (fail open — prefer load over silent skip).
+   */
+  async getBundledOnlyExtensionIds(): Promise<string[]> {
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI) return [];
+    try {
+      const result = await electronAPI.invoke('extensions:get-bundled-only-ids');
+      if (result && result.success && Array.isArray(result.data)) {
+        return result.data as string[];
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
 }

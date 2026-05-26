@@ -115,17 +115,7 @@ function mergeLocalExtensions(data: RegistryData): void {
  * runs. Returns null if not found.
  */
 async function resolveBundledNimext(fileName: string): Promise<string | null> {
-  const candidates = app.isPackaged
-    ? [
-        path.join(process.resourcesPath, 'bundled-extensions', fileName),
-        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions', fileName),
-      ]
-    : [
-        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
-        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions', fileName),
-        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions', fileName),
-        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions', fileName),
-      ];
+  const candidates = bundledExtensionsDirCandidates().map(dir => path.join(dir, fileName));
   for (const candidate of candidates) {
     try {
       await fs.access(candidate);
@@ -135,6 +125,58 @@ async function resolveBundledNimext(fileName: string): Promise<string | null> {
     }
   }
   return null;
+}
+
+/**
+ * Candidate directories where the app's bundled .nimext packages live. Mirrors
+ * the resolution logic in `resolveBundledNimext` but at the directory level so
+ * we can also list the packages (used to derive the bundled-only extension IDs
+ * that must NOT auto-load from the built-in extensions directory).
+ */
+function bundledExtensionsDirCandidates(): string[] {
+  return app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'bundled-extensions'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions'),
+      ]
+    : [
+        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
+        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions'),
+      ];
+}
+
+/**
+ * Compute the set of extension IDs that ship as bundled .nimext packages in
+ * `resources/bundled-extensions/`. These extensions are "marketplace-only":
+ * they appear in the marketplace and install into the USER extensions dir on
+ * explicit user action, and must NOT be auto-discovered out of the BUILT-IN
+ * extensions dir even if a development checkout has a sibling source folder
+ * under `packages/extensions/` (which happens for in-tree development of
+ * marketplace extensions). User-installed copies in the user extensions dir
+ * still load normally.
+ *
+ * The ID is derived from the .nimext filename: `gemini-antigravity.nimext` ->
+ * `gemini-antigravity`. The bundled registry (`extensionRegistry.json`) keeps
+ * the same naming convention via `downloadUrl: "bundled:<id>.nimext"`.
+ */
+export async function getBundledOnlyExtensionIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const dir of bundledExtensionsDirCandidates()) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.toLowerCase().endsWith('.nimext')) {
+        ids.add(entry.slice(0, -'.nimext'.length));
+      }
+    }
+  }
+  return Array.from(ids);
 }
 
 /**
@@ -741,5 +783,20 @@ export function registerExtensionMarketplaceHandlers(): void {
     registryCache = null;
     registryCacheTimestamp = 0;
     return { success: true };
+  });
+
+  // List the extension IDs that ship as bundled .nimext packages. The
+  // renderer extension loader uses this to skip auto-discovery of those
+  // extensions from the BUILT-IN extensions directory, so they only load
+  // when the user explicitly installs them via the Marketplace.
+  safeHandle('extensions:get-bundled-only-ids', async () => {
+    try {
+      const ids = await getBundledOnlyExtensionIds();
+      return { success: true, data: ids };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.main.warn('[ExtMarketplace] Failed to list bundled-only extension IDs:', error);
+      return { success: false, error: message };
+    }
   });
 }
