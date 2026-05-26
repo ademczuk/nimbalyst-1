@@ -238,6 +238,58 @@ export async function getAllExtensionDirectories(): Promise<string[]> {
 }
 
 /**
+ * Candidate directories where the app's bundled .nimext packages live.
+ * Mirrors `getBuiltinExtensionsDirectory` resolution for packaged vs dev
+ * (vite build) runs. Used by `getBundledOnlyExtensionIds` and by the
+ * marketplace handler to resolve the actual .nimext file at install time.
+ */
+export function bundledExtensionsDirCandidates(): string[] {
+  return app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'bundled-extensions'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions'),
+      ]
+    : [
+        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
+        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions'),
+      ];
+}
+
+/**
+ * Compute the set of extension IDs that ship as bundled .nimext packages in
+ * `resources/bundled-extensions/`. These are MARKETPLACE-ONLY: they appear in
+ * the marketplace and install into the USER extensions dir on explicit user
+ * action. They must NOT be auto-discovered out of the BUILT-IN extensions dir
+ * even if a development checkout has a sibling source folder under
+ * `packages/extensions/` (which happens for in-tree development of marketplace
+ * extensions). User-installed copies in the user extensions dir still load
+ * normally.
+ *
+ * The ID is derived from the .nimext filename: `gemini-antigravity.nimext` ->
+ * `gemini-antigravity`. The bundled registry (`extensionRegistry.json`) keeps
+ * the same naming convention via `downloadUrl: "bundled:<id>.nimext"`.
+ */
+export async function getBundledOnlyExtensionIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const dir of bundledExtensionsDirCandidates()) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.toLowerCase().endsWith('.nimext')) {
+        ids.add(entry.slice(0, -'.nimext'.length));
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+/**
  * Look up an installed extension's manifest by its declared id, scanning all
  * extension directories (user + built-in). Returns the parsed manifest, or
  * null if no installed extension declares that id.
@@ -855,6 +907,12 @@ export function registerExtensionHandlers(): void {
   // Scans both user extensions and built-in extensions directories.
   // User extensions take priority over built-in extensions with the same ID.
   // Extensions with requiredReleaseChannel are filtered based on user's release channel.
+  // Bundled MARKETPLACE-ONLY extensions (those shipped as .nimext packages in
+  // resources/bundled-extensions/) are NOT reported as installed when found
+  // only in the built-in dir -- they appear there in dev because the source
+  // folder is a sibling under packages/extensions/, but the contract is that
+  // the user must explicitly install them through the marketplace into the
+  // user extensions dir before they count as installed.
   safeHandle('extensions:list-installed', async () => {
     try {
       const extensions: Array<{
@@ -865,6 +923,7 @@ export function registerExtensionHandlers(): void {
       }> = [];
       const seenExtensionIds = new Set<string>();
       const currentChannel = getReleaseChannel();
+      const bundledOnlyIds = new Set(await getBundledOnlyExtensionIds());
 
       // Clear previously registered file types
       clearRegisteredExtensions();
@@ -909,6 +968,17 @@ export function registerExtensionHandlers(): void {
             if (seenExtensionIds.has(extensionId)) {
               continue;
             }
+
+            // Skip bundled marketplace-only extensions encountered in the
+            // BUILT-IN dir. They only count as installed once the user has
+            // explicitly installed them through the marketplace (which copies
+            // the .nimext into the user extensions dir; that copy is picked
+            // up earlier in the loop because user dirs come first).
+            if (isBuiltinDir && bundledOnlyIds.has(extensionId)) {
+              logger.main.debug(`[ExtensionHandlers] Skipping bundled marketplace-only extension ${extensionId} from built-in dir (not user-installed)`);
+              continue;
+            }
+
             seenExtensionIds.add(extensionId);
 
             // Skip extensions that require a different release channel

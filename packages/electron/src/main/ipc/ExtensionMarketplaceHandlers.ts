@@ -19,7 +19,12 @@ import extractZip from 'extract-zip';
 import { app, BrowserWindow, net } from 'electron';
 import { logger } from '../utils/logger';
 import { safeHandle } from '../utils/ipcRegistry';
-import { getUserExtensionsDirectory, initializeExtensionFileTypes } from './ExtensionHandlers';
+import {
+  getUserExtensionsDirectory,
+  initializeExtensionFileTypes,
+  bundledExtensionsDirCandidates,
+  getBundledOnlyExtensionIds,
+} from './ExtensionHandlers';
 import {
   getMarketplaceInstalls,
   getMarketplaceInstall,
@@ -127,57 +132,10 @@ async function resolveBundledNimext(fileName: string): Promise<string | null> {
   return null;
 }
 
-/**
- * Candidate directories where the app's bundled .nimext packages live. Mirrors
- * the resolution logic in `resolveBundledNimext` but at the directory level so
- * we can also list the packages (used to derive the bundled-only extension IDs
- * that must NOT auto-load from the built-in extensions directory).
- */
-function bundledExtensionsDirCandidates(): string[] {
-  return app.isPackaged
-    ? [
-        path.join(process.resourcesPath, 'bundled-extensions'),
-        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions'),
-      ]
-    : [
-        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
-        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions'),
-        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions'),
-        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions'),
-      ];
-}
-
-/**
- * Compute the set of extension IDs that ship as bundled .nimext packages in
- * `resources/bundled-extensions/`. These extensions are "marketplace-only":
- * they appear in the marketplace and install into the USER extensions dir on
- * explicit user action, and must NOT be auto-discovered out of the BUILT-IN
- * extensions dir even if a development checkout has a sibling source folder
- * under `packages/extensions/` (which happens for in-tree development of
- * marketplace extensions). User-installed copies in the user extensions dir
- * still load normally.
- *
- * The ID is derived from the .nimext filename: `gemini-antigravity.nimext` ->
- * `gemini-antigravity`. The bundled registry (`extensionRegistry.json`) keeps
- * the same naming convention via `downloadUrl: "bundled:<id>.nimext"`.
- */
-export async function getBundledOnlyExtensionIds(): Promise<string[]> {
-  const ids = new Set<string>();
-  for (const dir of bundledExtensionsDirCandidates()) {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry.toLowerCase().endsWith('.nimext')) {
-        ids.add(entry.slice(0, -'.nimext'.length));
-      }
-    }
-  }
-  return Array.from(ids);
-}
+// bundledExtensionsDirCandidates and getBundledOnlyExtensionIds now live in
+// ExtensionHandlers.ts so both this handler and extensions:list-installed can
+// share a single source of truth for what counts as a bundled marketplace-only
+// extension.
 
 /**
  * Fetch registry data from the live Cloudflare Worker.
