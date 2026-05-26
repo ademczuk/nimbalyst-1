@@ -107,6 +107,62 @@ export class MetaAgentService {
     return this.serverPort;
   }
 
+  /**
+   * Dispatch a meta-agent MCP tool call from outside the MCP HTTP server.
+   *
+   * The antigravity-gemini-agent provider runs in the renderer extension
+   * and cannot speak SSE/MCP to localhost servers, so its main-side
+   * `antigravity:agent:execute-tool` IPC handler routes
+   * `mcp__nimbalyst-meta-agent__*` tool calls through this method. The
+   * caller passes the canonical MCP tool name (with or without the
+   * `mcp__nimbalyst-meta-agent__` prefix) and the JSON args the model
+   * emitted; this method mirrors the switch in `metaAgentServer.ts` so
+   * behavior stays identical to the MCP path used by Claude/Codex.
+   *
+   * Returns the same JSON string the MCP server would return as the
+   * tool's `content[0].text`, so the tool-loop can pass it back to the
+   * model unchanged.
+   *
+   * @throws if MetaAgentService hasn't been started or the tool name is
+   *         unknown.
+   */
+  public async invokeMetaAgentTool(
+    callerSessionId: string,
+    workspaceId: string,
+    rawToolName: string,
+    args: Record<string, unknown>
+  ): Promise<string> {
+    if (!this.started) {
+      throw new Error('MetaAgentService not started');
+    }
+    const toolName = rawToolName.replace(/^mcp__nimbalyst-meta-agent__/, '');
+    switch (toolName) {
+      case 'list_worktrees':
+        return await this.listWorktreesJson(workspaceId);
+      case 'create_session':
+        return await this.createChildSession(callerSessionId, workspaceId, args as CreateChildSessionArgs);
+      case 'spawn_session':
+        return await this.spawnSession(callerSessionId, workspaceId, args as unknown as SpawnSessionArgs);
+      case 'get_session_status':
+        return await this.getSessionStatusJson(String(args.sessionId ?? ''), workspaceId);
+      case 'get_session_result':
+        return await this.getSessionResultJson(String(args.sessionId ?? ''), workspaceId);
+      case 'send_prompt':
+        return await this.sendPromptToSession(String(args.sessionId ?? ''), workspaceId, String(args.prompt ?? ''));
+      case 'respond_to_prompt':
+        return await this.respondToPrompt(workspaceId, args as {
+          sessionId: string;
+          promptId: string;
+          promptType: PromptType;
+          response: Record<string, unknown>;
+        });
+      case 'list_spawned_sessions':
+        return await this.listSpawnedSessionsJson(callerSessionId, workspaceId);
+      default:
+        throw new Error(`Unknown meta-agent tool: ${rawToolName}`);
+    }
+  }
+
   private shouldBypassChildAgentExecutionForTests(): boolean {
     return (
       process.env.PLAYWRIGHT === '1' ||
