@@ -659,6 +659,75 @@ export function initializeAiProviderBridge(): void {
 }
 
 /**
+ * Wire a renderer-side listener that answers main's `ext-provider:get-models`
+ * requests for extension-contributed providers.
+ *
+ * ModelRegistry.getAllModels() (in main) iterates ProviderRegistry and calls
+ * each descriptor.getModels(). Extension impls live in the renderer and expose
+ * a static getModels() (see AntigravityProvider.getModels). Main fires this IPC
+ * to round-trip the call here.
+ *
+ * Without this, ai:getAllModels returns [] for extension providers and the
+ * Settings panel shows "No models found" even when the connection is healthy.
+ */
+let extensionProviderModelBridgeWired = false;
+function initializeExtensionProviderModelBridge(): void {
+  if (extensionProviderModelBridgeWired) return;
+  extensionProviderModelBridgeWired = true;
+
+  window.electronAPI.on(
+    'ext-provider:get-models',
+    (payload: { requestId: string; providerId: string }) => {
+      void (async () => {
+        const send = (
+          models: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }>,
+          error?: string,
+        ) => {
+          window.electronAPI.send('ext-provider:get-models:response', {
+            requestId: payload.requestId,
+            models,
+            error,
+          });
+        };
+
+        try {
+          const loader = getExtensionLoader();
+          const entry = loader
+            .getAiProviders()
+            .find((e) => e.contribution.id === payload.providerId);
+          if (!entry) {
+            send([], `extension provider '${payload.providerId}' not loaded`);
+            return;
+          }
+
+          // The contributed impl can be either:
+          //   (a) a class with a static `getModels()` (AntigravityProvider pattern)
+          //   (b) an instance / module with an instance `getModels()` method
+          // We try the static first so we don't construct the provider for a
+          // simple catalog lookup.
+          const impl = entry.impl as unknown as {
+            getModels?: () => Promise<unknown[]> | unknown[];
+          };
+          if (typeof impl.getModels !== 'function') {
+            send([], `extension provider '${payload.providerId}' does not expose getModels()`);
+            return;
+          }
+
+          const result = await impl.getModels();
+          const models = Array.isArray(result)
+            ? (result as Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }>)
+            : [];
+          send(models);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          send([], msg);
+        }
+      })();
+    },
+  );
+}
+
+/**
  * Register the Extension System with its platform service.
  * Should be called once during app initialization.
  *
@@ -715,6 +784,12 @@ export async function registerExtensionSystem(): Promise<void> {
     // Wire the renderer half of the extension-provider turn bridge so the
     // main-process proxy can delegate turns to renderer-resident impls.
     initializeExtensionProviderTurnBridge();
+
+    // Wire the renderer half of the model-catalog bridge so main-side
+    // ai:getAllModels can ask the renderer for each extension provider's
+    // getModels() result. Without this, ModelRegistry returns [] for extension
+    // providers and the Settings panel shows "No models found".
+    initializeExtensionProviderModelBridge();
 
     // Set up IPC listener for screenshot capture requests
     setupScreenshotIPCListener();
