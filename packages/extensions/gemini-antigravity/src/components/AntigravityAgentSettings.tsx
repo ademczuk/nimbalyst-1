@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import { AntigravityAgentProvider } from '../AntigravityAgentProvider';
 
 interface Model {
   id: string;
@@ -48,6 +49,34 @@ export function AntigravityAgentSettings({
   const enabledModelIds = config.models ?? [];
   const allSelected = availableModels.length > 0
     && availableModels.every((m) => enabledModelIds.includes(m.id));
+
+  // Extension-local error surface for getModels() failures (e.g. version-gate).
+  // Mirrors the same pattern in AntigravitySettings (chat panel).
+  const [modelsError, setModelsError] = React.useState<string | null>(null);
+  const prevEnabledRef = React.useRef<boolean | undefined>(undefined);
+  React.useEffect(() => {
+    const wasEnabled = prevEnabledRef.current;
+    prevEnabledRef.current = config.enabled;
+
+    if (!config.enabled) {
+      setModelsError(null);
+      return;
+    }
+
+    const shouldProbe =
+      (wasEnabled === false || wasEnabled === undefined) ||
+      (availableModels.length === 0 && !loading);
+
+    if (!shouldProbe) return;
+
+    AntigravityAgentProvider.getModels().then(() => {
+      setModelsError(null);
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setModelsError(msg);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.enabled, availableModels.length, loading]);
 
   // Auto-tick all models on first enable. Mirrors AntigravitySettings (chat panel).
   // The ref guard prevents multiple disk writes from StrictMode double-invoke +
@@ -154,11 +183,18 @@ export function AntigravityAgentSettings({
               </div>
 
               {availableModels.length === 0 ? (
-                <p className="text-[13px] text-[var(--nim-text-muted)]">
-                  {loading
-                    ? 'Loading models...'
-                    : 'No models found. Make sure Antigravity is installed and you are signed in, then test the connection.'}
-                </p>
+                <>
+                  {modelsError && !loading && (
+                    <p className="text-[13px] text-[var(--nim-error)] mb-2">
+                      {modelsError}
+                    </p>
+                  )}
+                  <p className="text-[13px] text-[var(--nim-text-muted)]">
+                    {loading
+                      ? 'Loading models...'
+                      : 'No models found. Make sure Antigravity is installed and you are signed in, then test the connection.'}
+                  </p>
+                </>
               ) : (
                 <ul className="provider-model-list flex flex-col gap-1">
                   {availableModels.map((model) => (

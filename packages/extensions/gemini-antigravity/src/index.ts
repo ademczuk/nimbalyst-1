@@ -138,7 +138,9 @@ export async function activate(_context: unknown): Promise<void> {
   // activation on the connection probe (the underlying server cold-start can
   // take 5-10s). Self-heals: if a previous activation's write failed, this
   // run picks it up. Honours explicit user opt-out.
-  void runActivationEnable();
+  void runActivationEnable().catch((err: unknown) => {
+    console.warn('[gemini-antigravity] enable-on-activate failed:', err);
+  });
 }
 
 export async function deactivate(): Promise<void> {

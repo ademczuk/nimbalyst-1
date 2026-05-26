@@ -2101,26 +2101,39 @@ app.on('activate', () => {
 app.on('before-quit', async (event) => {
     console.log('[QUIT] before-quit event triggered');
 
-    // Kill any Antigravity language server we spawned. Without this, the
-    // child process is orphaned on Windows and keeps holding its TCP port,
-    // so the NEXT launch of nimbalyst hits a bind failure when it tries to
-    // claim the same candidate port. Sync API, no await needed -- and we
-    // wrap in try/catch so a stop failure can never block the quit.
-    try {
-        AntigravityServerManager.shared().stop();
-    } catch (err) {
-        console.warn('[QUIT] AntigravityServerManager.stop() failed:', err);
-    }
+    // Helper: stop the Antigravity language server we spawned. Without this,
+    // the child process is orphaned on Windows and keeps holding its TCP
+    // port, so the NEXT launch of nimbalyst hits a bind failure when it
+    // tries to claim the same candidate port. Sync API, no await needed --
+    // and we wrap in try/catch so a stop failure cannot block the quit.
+    //
+    // Called only AFTER all the "should we actually quit" gates pass,
+    // because users can cancel the quit in the active-AI-session dialog
+    // below. Stopping the server pre-emptively would kill it even when the
+    // user clicks Cancel, forcing a needless cold-start on their next AI
+    // call.
+    const stopAntigravityServer = () => {
+        try {
+            AntigravityServerManager.shared().stop();
+        } catch (err) {
+            console.warn('[QUIT] AntigravityServerManager.stop() failed:', err);
+        }
+    };
 
     // If auto-updater is updating, don't prevent quit
     if (AutoUpdaterService.isUpdatingApp()) {
         console.log('[QUIT] Auto-updater is updating, allowing quit');
+        stopAntigravityServer();
         return;
     }
 
     // If we're already quitting, don't prevent default to avoid infinite loop
     if (isAppQuitting) {
         console.log('[QUIT] Already quitting, allowing default behavior');
+        // The previous before-quit pass already called stopAntigravityServer
+        // before flipping isAppQuitting; do it again here as a belt-and-braces
+        // in case that earlier path bailed out before reaching the stop call.
+        stopAntigravityServer();
         return;
     }
 
@@ -2137,6 +2150,10 @@ app.on('before-quit', async (event) => {
         } catch (error) {
             console.error('[QUIT] Error saving session state for restart:', error);
         }
+        // Stop the language server -- a programmatic restart is a real exit
+        // from the language server's perspective. The dev-loop.sh wrapper
+        // re-spawns nimbalyst, which will respawn the server fresh.
+        stopAntigravityServer();
         // Don't delete the file here - dev-loop.sh needs it to know to restart
         return;
     }
@@ -2187,6 +2204,11 @@ app.on('before-quit', async (event) => {
 
     // Mark app as quitting to prevent interval operations
     isAppQuitting = true;
+
+    // Real quit reached: stop the language server now that all "cancel quit"
+    // gates have passed. See stopAntigravityServer doc above for why we
+    // don't do this at the top of before-quit.
+    stopAntigravityServer();
 
     // Setup force quit timer - allow enough time for database backup + close
     // Database operations: backup (up to 5s) + close worker (up to 5s) + buffer (5s/3s)

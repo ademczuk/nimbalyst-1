@@ -169,6 +169,20 @@ function setupExtensionDevListeners(): void {
       // extension's provider id stays in ProviderRegistry forever and the
       // session loop will try to construct an ExtensionProviderProxy that
       // has no live renderer impl to delegate turns to.
+      //
+      // Intentionally does NOT prune ai-settings.providerSettings here.
+      // Three call sites trigger this dev-unload broadcast and only one of
+      // them is a real uninstall:
+      //   1. ExtensionMarketplaceHandlers uninstallExtension(): prunes
+      //      ai-settings in MAIN before broadcasting (see
+      //      pruneAiSettingsProviders helper). Doing it again here would be
+      //      redundant.
+      //   2. ExtensionDevService file-watcher hot-reload: a reload, not an
+      //      uninstall. Pruning would wipe the user's model toggles every
+      //      time they touch a source file in dev mode.
+      //   3. ExtensionHandlers extensions:dev-unload IPC: dev tooling that
+      //      force-unloads in-memory state without removing on-disk files.
+      //      Pruning would surprise the developer.
       if (aiProviderIds.length > 0) {
         for (const id of aiProviderIds) {
           ProviderRegistry.unregister(id);

@@ -168,7 +168,21 @@ export class AntigravityProvider {
     maxTokens?: number;
     contextWindow?: number;
   }>> {
-    const catalog = await AntigravityRpcClient.getAvailableModels();
+    let catalog: AntigravityModelInfo[];
+    try {
+      catalog = await AntigravityRpcClient.getAvailableModels();
+    } catch (err) {
+      // Re-wrap version-gate errors with a user-readable message so settings
+      // panels can display actionable guidance instead of a generic failure.
+      if (err instanceof Error && (err as Error & { isVersionGate?: boolean }).isVersionGate) {
+        const wrapped = new Error(
+          'Antigravity needs an update. Open the Antigravity IDE so it can update itself, then test again.',
+        );
+        (wrapped as Error & { isVersionGate: boolean }).isVersionGate = true;
+        throw wrapped;
+      }
+      throw err;
+    }
     const out: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }> = [];
     for (const info of catalog) {
       if (!SURFACED_MODEL_KEYS.has(info.key)) continue;

@@ -88,6 +88,21 @@ function wireIpcOnce(): void {
   });
 }
 
+/**
+ * Typed sentinel for the done-state of an async iterator.
+ *
+ * When `done: true` the iterator contract says callers must ignore `value`, but
+ * TypeScript's `IteratorReturnResult<TReturn>` still requires the field to be
+ * typed as `TReturn` (here `StreamChunk`). `undefined` is the correct runtime
+ * value - the cast is unavoidable because the iterator return type is not
+ * parameterised as `StreamChunk | undefined`. Using a named helper rather than
+ * inline `as unknown as StreamChunk` makes the intent searchable and keeps the
+ * cast in one place.
+ */
+function doneResult(): IteratorResult<StreamChunk> {
+  return { value: undefined as unknown as StreamChunk, done: true };
+}
+
 /** Minimal push/pull async queue of StreamChunks fed by renderer IPC. */
 class ChunkQueue {
   private readonly buffer: StreamChunk[] = [];
@@ -121,7 +136,7 @@ class ChunkQueue {
       const r = this.resolveNext;
       this.resolveNext = null;
       this.rejectNext = null;
-      r({ value: undefined as unknown as StreamChunk, done: true });
+      r(doneResult());
     }
   }
 
@@ -132,7 +147,7 @@ class ChunkQueue {
     if (this.finished) {
       return this.failure
         ? Promise.reject(this.failure)
-        : Promise.resolve({ value: undefined as unknown as StreamChunk, done: true });
+        : Promise.resolve(doneResult());
     }
     return new Promise((resolve, reject) => {
       this.resolveNext = resolve;
