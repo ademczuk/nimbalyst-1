@@ -23,94 +23,97 @@ import { AntigravityAgentProvider } from './AntigravityAgentProvider';
 import { AntigravitySettings } from './components/AntigravitySettings';
 import { AntigravityAgentSettings } from './components/AntigravityAgentSettings';
 
-/**
- * Configuration service surface used by the auto-enable flow.
- * Mirrors the renderer-side ExtensionConfigurationService contract; declared
- * inline so this file doesn't need to import the SDK type just for one shape.
- */
-interface AutoEnableConfigService {
-  get: <T>(key: string, defaultValue?: T) => T;
-  update: (key: string, value: unknown, scope?: 'user' | 'workspace') => Promise<void>;
-}
-
-interface AutoEnableContext {
-  services?: {
-    configuration?: AutoEnableConfigService;
-  };
-}
-
-/** Sentinel key in the extension's configuration store. */
-const AUTO_ENABLE_SENTINEL_KEY = 'didAutoEnableOnInstall';
-
 /** Provider IDs we contribute (must match manifest aiProviders[].id). */
 const CONTRIBUTED_PROVIDER_IDS = [
   'antigravity-gemini',
   'antigravity-gemini-agent',
 ] as const;
 
+interface PersistedProviderSettings {
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+interface AISettingsSnapshot {
+  providerSettings?: Record<string, PersistedProviderSettings | undefined>;
+  [key: string]: unknown;
+}
+
 /**
- * Auto-enable the contributed providers and fire a one-shot Test connection
- * on first activation after install. Subsequent activations are no-ops thanks
- * to the `didAutoEnableOnInstall` sentinel stored in extension configuration.
+ * Idempotent enable-on-activate.
  *
- * Without this, freshly-installed extensions render with both providers
- * disabled and force the user to toggle them on manually before they can
- * even attempt a connection - bad first-run UX.
+ * Reads the current provider settings, then for each contributed provider:
+ *   - If the user has explicitly set `enabled: false`, leave it alone (opt-out wins).
+ *   - Otherwise (missing entry OR `enabled !== false`), write `enabled: true`.
+ *
+ * Replaces the previous sentinel-based first-install flow. The sentinel was
+ * fragile: if the original install's write failed silently, the sentinel could
+ * still be set, leaving both providers permanently disabled until the user
+ * intervened. This approach self-heals on every relaunch.
+ *
+ * After the enable pass, runs a one-shot Test connection so the user sees a
+ * green check (or a clear error) without clicking anything.
  */
-async function runFirstInstallAutoEnable(context: AutoEnableContext): Promise<void> {
-  const configuration = context?.services?.configuration;
-  if (!configuration) {
-    console.warn(
-      '[gemini-antigravity] No configuration service in activation context; skipping auto-enable',
-    );
-    return;
-  }
-
-  // Idempotency: only run the auto-enable once per install.
-  const already = configuration.get<boolean>(AUTO_ENABLE_SENTINEL_KEY, false);
-  if (already) return;
-
+async function runActivationEnable(): Promise<void> {
   const api = (globalThis as { window?: Window }).window?.electronAPI as
     | {
+        aiGetSettings?: () => Promise<AISettingsSnapshot>;
         aiSaveSettings?: (settings: unknown) => Promise<unknown>;
-        aiTestConnection?: (provider: string, workspacePath?: string) => Promise<{ success: boolean; error?: string }>;
+        aiTestConnection?: (
+          provider: string,
+          workspacePath?: string,
+        ) => Promise<{ success: boolean; error?: string }>;
         aiClearModelCache?: () => Promise<unknown>;
       }
     | undefined;
 
-  if (!api?.aiSaveSettings || !api?.aiTestConnection) {
+  if (!api?.aiGetSettings || !api?.aiSaveSettings || !api?.aiTestConnection) {
     console.warn(
-      '[gemini-antigravity] electronAPI not available in renderer; skipping auto-enable',
+      '[gemini-antigravity] electronAPI unavailable in renderer; skipping enable-on-activate',
     );
     return;
   }
 
-  // 1) Flip both providers to enabled in the host's settings store.
+  // 1) Read current settings to honour user opt-out.
+  let currentProviderSettings: Record<string, PersistedProviderSettings | undefined> = {};
   try {
-    await api.aiSaveSettings({
-      providerSettings: {
-        'antigravity-gemini': { enabled: true, testStatus: 'idle' },
-        'antigravity-gemini-agent': { enabled: true, testStatus: 'idle' },
-      },
-    });
-    console.log('[gemini-antigravity] auto-enabled both providers on first install');
+    const snapshot = await api.aiGetSettings();
+    currentProviderSettings = snapshot?.providerSettings ?? {};
   } catch (err) {
-    console.error('[gemini-antigravity] auto-enable: aiSaveSettings failed:', err);
+    console.error('[gemini-antigravity] enable-on-activate: aiGetSettings failed:', err);
+    // Fall through with empty snapshot; write-through still enables both providers.
   }
 
-  // 2) Mark the sentinel BEFORE the test connection so a slow/failing test
-  //    doesn't cause us to retry the auto-enable on subsequent boots. The
-  //    user is still free to manually toggle providers off; we don't second-
-  //    guess them later.
-  try {
-    await configuration.update(AUTO_ENABLE_SENTINEL_KEY, true, 'user');
-  } catch (err) {
-    console.error('[gemini-antigravity] auto-enable: failed to set sentinel:', err);
+  // 2) Determine which contributed providers need to be enabled.
+  const slicesToWrite: Record<string, PersistedProviderSettings> = {};
+  for (const providerId of CONTRIBUTED_PROVIDER_IDS) {
+    const existing = currentProviderSettings[providerId];
+    // Respect explicit opt-out. Any other shape (missing, partial, enabled:true) gets enabled:true.
+    if (existing?.enabled === false) {
+      console.log(
+        `[gemini-antigravity] enable-on-activate: ${providerId} is user-disabled; leaving as-is`,
+      );
+      continue;
+    }
+    // Preserve any other fields the user/host may have set (e.g. defaultModel).
+    slicesToWrite[providerId] = { ...(existing ?? {}), enabled: true };
   }
 
-  // 3) Fire a one-shot Test connection so the user sees a green check (or a
-  //    clear error) without having to click anything. The connection test
-  //    populates the model catalog via the same path Settings would.
+  if (Object.keys(slicesToWrite).length === 0) {
+    console.log('[gemini-antigravity] enable-on-activate: nothing to do');
+  } else {
+    try {
+      await api.aiSaveSettings({ providerSettings: slicesToWrite });
+      console.log(
+        '[gemini-antigravity] enable-on-activate: wrote enabled:true for',
+        Object.keys(slicesToWrite).join(', '),
+      );
+    } catch (err) {
+      console.error('[gemini-antigravity] enable-on-activate: aiSaveSettings failed:', err);
+    }
+  }
+
+  // 3) Fire a one-shot Test connection so the user sees a green check.
   try {
     if (api.aiClearModelCache) {
       await api.aiClearModelCache();
@@ -129,11 +132,13 @@ async function runFirstInstallAutoEnable(context: AutoEnableContext): Promise<vo
   }
 }
 
-export async function activate(context: unknown): Promise<void> {
+export async function activate(_context: unknown): Promise<void> {
   console.log('[gemini-antigravity] Extension activated');
-  // Run auto-enable + auto-test in the background so we don't block activation
-  // on the connection probe (the underlying server cold-start can take 5-10s).
-  void runFirstInstallAutoEnable(context as AutoEnableContext);
+  // Run idempotent enable + auto-test in the background so we don't block
+  // activation on the connection probe (the underlying server cold-start can
+  // take 5-10s). Self-heals: if a previous activation's write failed, this
+  // run picks it up. Honours explicit user opt-out.
+  void runActivationEnable();
 }
 
 export async function deactivate(): Promise<void> {
