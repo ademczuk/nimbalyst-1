@@ -23,10 +23,26 @@
  *   antigravity:agent:get-system-prompt -> { ok, data: systemPrompt }
  *   antigravity:agent:get-tools         -> { ok, data: OpenAITool[] }
  *   antigravity:agent:execute-tool      -> { ok, data: result }
+ *
+ * Meta-agent wiring (CLA-185 Bug J, Task #60+#73):
+ *   When the caller's session has `agentRole === 'meta-agent'` we serve
+ *   `buildMetaAgentSystemPrompt` plus the canonical META_AGENT_ALLOWED_TOOLS
+ *   schema and dispatch `mcp__nimbalyst-meta-agent__*` tool calls directly
+ *   through MetaAgentService.invokeMetaAgentTool. The renderer-side
+ *   antigravity provider sees these tools in its OpenAI-style tool list,
+ *   the model emits `{"tool_call":{"name":"mcp__nimbalyst-meta-agent__...",
+ *   "arguments":{...}}}` per AntigravityToolLoopProtocol, the loop sends
+ *   that to `antigravity:agent:execute-tool`, and we run the same code
+ *   path Claude Code uses for the SSE MCP transport (only without the
+ *   HTTP round-trip). The result is returned as a string the loop hands
+ *   back to the model as its tool result.
  */
 
 import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
+import { AISessionsRepository } from '@nimbalyst/runtime';
+import { buildMetaAgentSystemPrompt } from '@nimbalyst/runtime/ai/server';
+import { MetaAgentService } from '../services/MetaAgentService';
 
 interface Ok<T> { ok: true; data: T }
 interface OkVoid { ok: true }
@@ -37,6 +53,177 @@ function ok<T>(data: T): Ok<T> { return { ok: true, data }; }
 function okVoid(): OkVoid { return { ok: true }; }
 function err(message: string, opts?: { versionGate?: boolean }): Err {
   return { ok: false, error: message, ...(opts?.versionGate ? { versionGate: true } : {}) };
+}
+
+interface OpenAITool {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Canonical OpenAI-style descriptors for the meta-agent MCP tools. The
+ * shapes are derived from the schemas registered in metaAgentServer.ts'
+ * ListToolsRequestSchema handler (kept in sync deliberately so the model
+ * sees the same arguments regardless of transport). We do NOT include
+ * `update_session_meta` here yet — see notes in
+ * MetaAgentService.invokeMetaAgentTool. Adding more tools is purely
+ * additive: extend this array AND the switch in MetaAgentService.
+ */
+const META_AGENT_TOOL_DESCRIPTORS: OpenAITool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__list_worktrees',
+      description:
+        'List the available git worktrees for this workspace so you can attach a child session to an existing branch or decide whether to create a fresh worktree.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__create_session',
+      description:
+        'Spawn a new child session for a focused task. Can optionally create a dedicated worktree or attach the session to an existing worktree, then seed it with an initial prompt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Optional title for the child session.' },
+          provider: {
+            type: 'string',
+            enum: ['claude-code', 'openai-codex'],
+            description: 'Provider to use for the child session.',
+          },
+          model: { type: 'string', description: 'Optional explicit model identifier.' },
+          prompt: {
+            type: 'string',
+            description:
+              'Optional initial prompt to queue for the child session immediately after creation.',
+          },
+          useWorktree: {
+            type: 'boolean',
+            description: 'Whether to create the child session inside a fresh git worktree.',
+          },
+          worktreeId: {
+            type: 'string',
+            description:
+              'Optional existing worktree ID to attach this child session to. Do not combine with useWorktree.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__list_spawned_sessions',
+      description:
+        'List all child sessions created by this meta-agent session, including current status and a short summary.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__get_session_status',
+      description:
+        'Get the current status of a child session including last activity time and whether it is waiting for input.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', description: 'The session ID to inspect.' },
+        },
+        required: ['sessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__get_session_result',
+      description:
+        'Get the current or final result of a session including prompts, recent responses, edited files, and pending interactive prompts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', description: 'The session ID to inspect.' },
+        },
+        required: ['sessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__send_prompt',
+      description:
+        'Queue a follow-up prompt for a child session. If the session is idle, prompt processing starts immediately.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', description: 'The target child session ID.' },
+          prompt: { type: 'string', description: 'The follow-up prompt to send.' },
+        },
+        required: ['sessionId', 'prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mcp__nimbalyst-meta-agent__respond_to_prompt',
+      description:
+        "Answer a child session's interactive prompt such as AskUserQuestion, ExitPlanMode, or ToolPermission.",
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', description: 'The child session waiting for input.' },
+          promptId: { type: 'string', description: 'The interactive prompt ID.' },
+          promptType: {
+            type: 'string',
+            enum: ['permission_request', 'ask_user_question_request', 'exit_plan_mode_request'],
+            description: 'The kind of prompt being answered.',
+          },
+          response: { type: 'object', description: 'Prompt-specific response payload.' },
+        },
+        required: ['sessionId', 'promptId', 'promptType', 'response'],
+      },
+    },
+  },
+];
+
+/**
+ * Default prompt for non-meta-agent sessions. Kept small so the chat-style
+ * tool loop still works even without injected tools.
+ */
+const DEFAULT_AGENT_SYSTEM_PROMPT =
+  'You are a helpful AI coding assistant. When tools are available, you can call them via the JSON tool_call envelope. Respond with plain text when you are done.';
+
+async function isMetaAgentSession(sessionId?: string): Promise<{
+  isMetaAgent: boolean;
+  provider?: string;
+  model?: string;
+  workspacePath?: string;
+}> {
+  if (!sessionId) {
+    return { isMetaAgent: false };
+  }
+  try {
+    const session = await AISessionsRepository.get(sessionId);
+    if (!session) return { isMetaAgent: false };
+    return {
+      isMetaAgent: session.agentRole === 'meta-agent',
+      provider: typeof session.provider === 'string' ? session.provider : undefined,
+      model: session.model ?? undefined,
+      workspacePath: session.workspacePath ?? undefined,
+    };
+  } catch {
+    return { isMetaAgent: false };
+  }
 }
 
 /**
@@ -149,33 +336,42 @@ export function registerAntigravityRpcHandlers(): void {
   });
 
   // -------- Agent-specific channels --------
-  // For Tier 1 of the marketplace migration, the agent-provider IPC channels
-  // return safe stubs. The renderer-side AntigravityAgentProvider needs:
-  //   - getSystemPrompt: an empty prompt is fine; the loop still works
-  //   - getTools: empty array means the model only produces text (no tool calls)
-  //   - executeTool: refuses with an error (never called when tools is empty)
-  //
-  // A follow-up plumb through MessageStreamingHandler / BaseAgentProvider so
-  // the renderer-side agent has the full Nimbalyst tool registry.
+  // Standard sessions get a minimal chat prompt and no tools (the agent-tool
+  // bridge for the full Nimbalyst registry remains task #73). Meta-agent
+  // sessions get the canonical meta-agent prompt + tool schema so the
+  // antigravity tool loop can spawn and coordinate child sessions exactly
+  // like Claude Code and Codex providers do via the MCP SSE transport.
 
-  safeHandle('antigravity:agent:get-system-prompt', async (_e, _payload: unknown): Promise<Result<string>> => {
+  safeHandle('antigravity:agent:get-system-prompt', async (_e, payload: { sessionId?: string }): Promise<Result<string>> => {
     try {
-      // Minimal default - the agent will still run as a tool-less assistant.
-      // Future: load buildClaudeCodeSystemPrompt / buildMetaAgentSystemPrompt
-      // from @nimbalyst/runtime/ai/prompt and route by session.agentRole.
-      const defaultPrompt = 'You are a helpful AI coding assistant. When tools are available, you can call them via the JSON tool_call envelope. Respond with plain text when you are done.';
-      return ok(defaultPrompt);
+      const { isMetaAgent, provider, model } = await isMetaAgentSession(payload?.sessionId);
+      if (isMetaAgent) {
+        // 'claude' style means tool references are rendered as `mcp__server__tool`
+        // which matches the names we register in META_AGENT_TOOL_DESCRIPTORS.
+        const promptText = buildMetaAgentSystemPrompt('claude', 'default', {
+          provider: provider ?? 'antigravity-gemini-agent',
+          model: model ?? 'gemini-3-flash-agent',
+        });
+        return ok(promptText);
+      }
+      return ok(DEFAULT_AGENT_SYSTEM_PROMPT);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return err(msg);
     }
   });
 
-  safeHandle('antigravity:agent:get-tools', async (_e, _payload: unknown): Promise<Result<Array<{ type: 'function'; function: { name: string; description?: string; parameters?: Record<string, unknown> } }>>> => {
+  safeHandle('antigravity:agent:get-tools', async (_e, payload: { sessionId?: string; workspacePath?: string }): Promise<Result<OpenAITool[]>> => {
     try {
-      // Tier-1: no tools. The agent loop becomes a multi-turn chat (still
-      // useful for meta-agent workflows that don't need file edits).
-      // Tier-2: source tools from a runtime registry shared with built-in agents.
+      const { isMetaAgent } = await isMetaAgentSession(payload?.sessionId);
+      if (isMetaAgent) {
+        // Return a fresh array each call so a downstream caller can safely
+        // mutate (e.g. append per-session tools later) without poisoning
+        // the shared module-level constant.
+        return ok(META_AGENT_TOOL_DESCRIPTORS.map((t) => ({ ...t, function: { ...t.function } })));
+      }
+      // Standard sessions: no tools yet. The agent loop falls back to plain
+      // chat — see comment block above for why this is intentional.
       return ok([]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -183,8 +379,53 @@ export function registerAntigravityRpcHandlers(): void {
     }
   });
 
-  safeHandle('antigravity:agent:execute-tool', async (_e, payload: { name?: string }): Promise<Result<unknown>> => {
-    return err(`antigravity:agent:execute-tool not yet wired (called with '${payload?.name ?? 'unknown'}')`);
+  safeHandle('antigravity:agent:execute-tool', async (_e, payload: {
+    sessionId?: string;
+    workspacePath?: string;
+    name?: string;
+    args?: Record<string, unknown>;
+  }): Promise<Result<unknown>> => {
+    try {
+      const toolName = payload?.name;
+      const sessionId = payload?.sessionId;
+      const workspacePath = payload?.workspacePath;
+      const args = (payload?.args ?? {}) as Record<string, unknown>;
+
+      if (!toolName) {
+        return err('antigravity:agent:execute-tool requires { name }');
+      }
+      if (!sessionId) {
+        return err(`antigravity:agent:execute-tool requires sessionId (tool: ${toolName})`);
+      }
+      if (!workspacePath) {
+        return err(`antigravity:agent:execute-tool requires workspacePath (tool: ${toolName})`);
+      }
+
+      if (toolName.startsWith('mcp__nimbalyst-meta-agent__')) {
+        try {
+          const text = await MetaAgentService.getInstance().invokeMetaAgentTool(
+            sessionId,
+            workspacePath,
+            toolName,
+            args,
+          );
+          return ok(text);
+        } catch (e) {
+          // Surface tool-side errors as a tool result the model can read,
+          // not as an IPC-level err (so the tool loop continues instead of
+          // aborting the whole turn). This mirrors how the MCP SSE path
+          // returns `isError: true` content rather than throwing.
+          const errMsg = e instanceof Error ? e.message : String(e);
+          logger.main.error(`[AntigravityRpc] meta-agent tool '${toolName}' failed:`, errMsg);
+          return ok(`Error: ${errMsg}`);
+        }
+      }
+
+      return err(`antigravity:agent:execute-tool: unknown tool '${toolName}'`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return err(msg);
+    }
   });
 
   logger.main.info('[AntigravityRpc] handlers registered');
