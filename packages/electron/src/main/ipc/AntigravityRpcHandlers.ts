@@ -203,24 +203,72 @@ const META_AGENT_TOOL_DESCRIPTORS: OpenAITool[] = [
 const DEFAULT_AGENT_SYSTEM_PROMPT =
   'You are a helpful AI coding assistant. When tools are available, you can call them via the JSON tool_call envelope. Respond with plain text when you are done.';
 
-async function isMetaAgentSession(sessionId?: string): Promise<{
+interface MetaAgentSessionInfo {
   isMetaAgent: boolean;
   provider?: string;
   model?: string;
   workspacePath?: string;
-}> {
+}
+
+/**
+ * Cache of session lookups for the agent tool-loop hot path. A session's
+ * agentRole / provider / model are set at creation and do not change for the
+ * lifetime of the session, so we can safely memoize the lookup. Cap the cache
+ * to avoid unbounded growth in long-running sessions; LRU-ish eviction by
+ * insertion order via Map iteration.
+ *
+ * Without this, every tool call inside a meta-agent loop hits PGLite for the
+ * same row -- a multi-step meta-agent turn was doing dozens of identical
+ * `ai_sessions` reads per second.
+ */
+const META_AGENT_CACHE_MAX = 64;
+const metaAgentSessionCache = new Map<string, MetaAgentSessionInfo>();
+
+function cacheMetaAgentSession(sessionId: string, info: MetaAgentSessionInfo): void {
+  if (metaAgentSessionCache.has(sessionId)) {
+    metaAgentSessionCache.delete(sessionId);
+  } else if (metaAgentSessionCache.size >= META_AGENT_CACHE_MAX) {
+    const oldestKey = metaAgentSessionCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      metaAgentSessionCache.delete(oldestKey);
+    }
+  }
+  metaAgentSessionCache.set(sessionId, info);
+}
+
+/**
+ * Test-only escape hatch: clear the cache so unit tests don't see stale rows.
+ * Exported as a named symbol so production code never imports it accidentally.
+ */
+export function __resetMetaAgentSessionCache(): void {
+  metaAgentSessionCache.clear();
+}
+
+async function isMetaAgentSession(sessionId?: string): Promise<MetaAgentSessionInfo> {
   if (!sessionId) {
     return { isMetaAgent: false };
   }
+  const cached = metaAgentSessionCache.get(sessionId);
+  if (cached) {
+    return cached;
+  }
   try {
     const session = await AISessionsRepository.get(sessionId);
-    if (!session) return { isMetaAgent: false };
-    return {
+    if (!session) {
+      // Negative cache too -- avoids hammering the DB if the model emits a
+      // tool call with a bogus sessionId. Bounded by the same cap.
+      const negative: MetaAgentSessionInfo = { isMetaAgent: false };
+      cacheMetaAgentSession(sessionId, negative);
+      return negative;
+    }
+    const info: MetaAgentSessionInfo = {
       isMetaAgent: session.agentRole === 'meta-agent',
       provider: typeof session.provider === 'string' ? session.provider : undefined,
       model: session.model ?? undefined,
       workspacePath: session.workspacePath ?? undefined,
     };
+    cacheMetaAgentSession(sessionId, info);
+    return info;
   } catch {
     return { isMetaAgent: false };
   }
