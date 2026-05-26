@@ -2822,14 +2822,23 @@ export class AIService {
       // unchecked even though enabled:true is persisted. The renderer's
       // aiSettingsListeners subscribe to this channel and call aiGetSettings()
       // to refresh the atom.
+      // Only broadcast when the save actually touched provider settings or api
+      // keys. ai:saveSettings is also used by non-provider toggles (autoCommit,
+      // showCodexUsageIndicator, theme, etc.) -- broadcasting on those caused
+      // every open window to do a full settings re-fetch + atom replace, which
+      // flickered the Settings panel UI on unrelated saves.
+      const touchedProviders = settings.providerSettings && Object.keys(settings.providerSettings).length > 0;
+      const touchedApiKeys = settings.apiKeys && Object.keys(settings.apiKeys).length > 0;
       try {
-        const windows = BrowserWindow.getAllWindows();
-        for (const win of windows) {
-          if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
-            win.webContents.send('ai-settings:changed', {
-              providerIds: settings.providerSettings ? Object.keys(settings.providerSettings) : [],
-              apiKeyNames: settings.apiKeys ? Object.keys(settings.apiKeys) : [],
-            });
+        if (touchedProviders || touchedApiKeys) {
+          const windows = BrowserWindow.getAllWindows();
+          for (const win of windows) {
+            if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+              win.webContents.send('ai-settings:changed', {
+                providerIds: settings.providerSettings ? Object.keys(settings.providerSettings) : [],
+                apiKeyNames: settings.apiKeys ? Object.keys(settings.apiKeys) : [],
+              });
+            }
           }
         }
       } catch (broadcastErr) {
@@ -2894,6 +2903,19 @@ export class AIService {
           apiKey = 'not-required';
           break;
         default:
+          // Extension-contributed providers may not need an api key (they bring
+          // their own auth). If the provider is registered in ProviderRegistry,
+          // treat the absence of a default test path as "no test available"
+          // rather than a hard "Unknown provider" failure. This keeps the
+          // Settings test-connection button non-error for any future extension
+          // that contributes an aiProvider without wiring a custom test here.
+          if (ProviderRegistry.has(provider)) {
+            return {
+              success: true,
+              provider,
+              note: 'No connection test available for this provider; verify by sending a message.',
+            };
+          }
           return { success: false, error: `Unknown provider: ${provider}` };
       }
 

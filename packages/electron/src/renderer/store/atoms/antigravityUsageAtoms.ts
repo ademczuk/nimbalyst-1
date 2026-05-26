@@ -87,7 +87,10 @@ export const antigravityIndicatorVisibleAtom = atom((get) => {
   // chatEnabled/agentEnabled true here too - if not, providersAtom is stale.
   // If enabled is true but installed is false, the ProviderRegistry mutation
   // hasn't reached this atom yet.
-  console.log('[antigravityIndicatorVisibleAtom] eval', {
+  // electron-log's file serializer prints `[object Object]` for object args,
+  // which hides the gate values when reading the on-disk log. Stringify so
+  // the file log surfaces the actual booleans + registryVersion + result.
+  const gateSummary = JSON.stringify({
     chatEnabled,
     agentEnabled,
     chatInstalled,
@@ -95,6 +98,7 @@ export const antigravityIndicatorVisibleAtom = atom((get) => {
     registryVersion,
     result,
   });
+  console.log('[antigravityIndicatorVisibleAtom] eval ' + gateSummary);
   return result;
 });
 

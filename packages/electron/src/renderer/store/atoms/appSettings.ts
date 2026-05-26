@@ -1465,7 +1465,18 @@ export async function initAIProviderSettings(): Promise<AIProviderSettings> {
       // `config.models?.includes(model.id)`. Default to undefined for the
       // optional fields; the disk value (if any) is merged on top.
       const base = providers[key] ?? { enabled: false, testStatus: 'idle' as const };
-      providers[key] = { ...base, ...value };
+      // Validate the disk shape before spreading. A corrupted or hand-edited
+      // settings file could carry `models: "some-string"` or `models: {}` and
+      // crash every downstream `.includes()` call. Normalize at the boundary.
+      const validated = value && typeof value === 'object'
+        ? {
+            ...value,
+            ...(value.models !== undefined && !Array.isArray(value.models)
+              ? { models: undefined }
+              : {}),
+          }
+        : {};
+      providers[key] = { ...base, ...validated };
     });
   }
 

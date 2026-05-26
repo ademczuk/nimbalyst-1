@@ -26,6 +26,11 @@ export function omitModelsField<T extends { models?: any }>(
 /**
  * Providers that use dynamic model discovery and should not persist a `models` field.
  * Kept as the fallback union for processes where the registry isn't populated yet.
+ *
+ * Note: `gemini-cli` was removed from the marketplace in commit 70d6c5c83 (replaced
+ * by the antigravity extension's static catalog), but is retained here so that on
+ * upgrade, any user who had a stale `gemini-cli` config on disk doesn't have its
+ * `models` field re-persisted before the provider is fully retired.
  */
 const DYNAMIC_MODEL_PROVIDERS = ['openai-codex', 'copilot-cli', 'gemini-cli'] as const;
 
