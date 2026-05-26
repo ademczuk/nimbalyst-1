@@ -1,16 +1,22 @@
 /**
  * Ambient type shim for the `@nimbalyst/runtime/ai/server` subpath.
  *
- * The extension imports `StreamChunk` from this subpath as a TYPE-ONLY import,
- * so vite erases it from the bundle and the host's real runtime module supplies
- * the value at run time. This declaration only exists so an ISOLATED
- * `tsc --noEmit` of this extension can resolve the type without pulling the
- * entire @nimbalyst/runtime source graph into the type check. Mirrors the
- * StreamChunk shape from packages/runtime/src/ai/server/types.ts (load-bearing
- * fields only).
+ * The extension imports `StreamChunk` from this subpath as a TYPE-ONLY import
+ * (exactly as the host's extensionProviderTurnBridge does), so vite erases it
+ * from the bundle and the host's real runtime module supplies the value at run
+ * time. This declaration only exists so an ISOLATED `tsc --noEmit` of this
+ * extension can resolve the type without pulling the entire @nimbalyst/runtime
+ * source graph (which is node-heavy and only type-checks as part of the
+ * monorepo). It mirrors the StreamChunk shape from
+ * packages/runtime/src/ai/server/types.ts (the load-bearing fields).
  *
  * If the runtime's published .d.ts ever ships, TypeScript prefers the real
  * declaration over this ambient fallback when both resolve.
+ *
+ * NOTE: this file must NOT use `export {}` or any top-level import/export
+ * statement - that would make it a module and turn the `declare module`
+ * blocks below into augmentations only (so the bare `import type` would fail
+ * to resolve).
  */
 declare module '@nimbalyst/runtime/ai/server' {
   export interface StreamChunk {
@@ -64,17 +70,13 @@ declare module '@nimbalyst/runtime/ai/server' {
 }
 
 /**
- * Window.electronAPI shim - the extension calls this for IPC.
- * The host injects the real implementation at runtime.
+ * Window.electronAPI shim - the extension calls this for IPC. The host
+ * injects the real implementation at runtime.
  */
-declare global {
-  interface Window {
-    electronAPI: {
-      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-      send: (channel: string, ...args: unknown[]) => void;
-      on: (channel: string, listener: (...args: unknown[]) => void) => () => void;
-    };
-  }
+interface Window {
+  electronAPI: {
+    invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+    send: (channel: string, ...args: unknown[]) => void;
+    on: (channel: string, listener: (...args: unknown[]) => void) => () => void;
+  };
 }
-
-export {};
