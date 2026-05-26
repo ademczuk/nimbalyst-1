@@ -117,6 +117,7 @@ import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
 import { ClaudeCodeProvider, OpenAICodexProvider, OpenAICodexACPProvider, OpenCodeProvider, CopilotCLIProvider, GeminiCLIProvider } from '@nimbalyst/runtime/ai/server';
+import { AntigravityServerManager } from '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityServerManager';
 import { matchesAllowPattern } from '@nimbalyst/runtime/ai/server/permissions/toolPermissionHelpers';
 import { sessionFileTracker } from './services/SessionFileTracker';
 import { historyManager } from './HistoryManager';
@@ -2099,6 +2100,17 @@ app.on('activate', () => {
 // Before quit handler
 app.on('before-quit', async (event) => {
     console.log('[QUIT] before-quit event triggered');
+
+    // Kill any Antigravity language server we spawned. Without this, the
+    // child process is orphaned on Windows and keeps holding its TCP port,
+    // so the NEXT launch of nimbalyst hits a bind failure when it tries to
+    // claim the same candidate port. Sync API, no await needed -- and we
+    // wrap in try/catch so a stop failure can never block the quit.
+    try {
+        AntigravityServerManager.shared().stop();
+    } catch (err) {
+        console.warn('[QUIT] AntigravityServerManager.stop() failed:', err);
+    }
 
     // If auto-updater is updating, don't prevent quit
     if (AutoUpdaterService.isUpdatingApp()) {
