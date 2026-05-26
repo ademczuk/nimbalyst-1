@@ -1,15 +1,14 @@
 /**
  * Settings panel for the Antigravity Gemini AGENT provider.
  *
- * Ported from packages/electron/src/renderer/components/GlobalSettings/panels/
- * AntigravityAgentPanel.tsx with the same UX changes as the chat panel:
- *   - Usage chip on the LEFT (mirrors Codex chip)
- *   - Connection test row at the TOP
- *   - Model list and detail sections below
+ * The inline UsageChip that previously occupied the left column has been
+ * REMOVED -- account credits and per-model quota now live on the global
+ * AntigravityUsageIndicator floating in the bottom-left navigation gutter,
+ * matching the Codex Usage chip pattern. This panel is focused on
+ * connection / enable / model selection only.
  */
 
 import React from 'react';
-import { UsageChip } from './UsageChip';
 
 interface Model {
   id: string;
@@ -51,11 +50,7 @@ export function AntigravityAgentSettings({
     && availableModels.every((m) => enabledModelIds.includes(m.id));
 
   return (
-    <div className="provider-panel antigravity-agent-panel flex gap-6" data-testid="antigravity-agent-settings">
-      <aside className="antigravity-usage-column flex flex-col gap-3 w-[260px] shrink-0">
-        <UsageChip />
-      </aside>
-
+    <div className="provider-panel antigravity-agent-panel flex flex-col" data-testid="antigravity-agent-settings">
       <div className="antigravity-main-column flex-1 flex flex-col">
         <div className="provider-panel-header mb-4 pb-4 border-b border-[var(--nim-border)]">
           <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-2 text-[var(--nim-text)]">

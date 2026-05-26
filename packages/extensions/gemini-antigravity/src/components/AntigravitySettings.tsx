@@ -1,15 +1,14 @@
 /**
  * Settings panel for the Antigravity Gemini CHAT provider.
  *
- * Ported from packages/electron/src/renderer/components/GlobalSettings/panels/
- * AntigravityPanel.tsx with three UX changes per user image #14:
- *   1. Usage chip on the LEFT side (mirrors Codex remaining-quota chip, image #12)
- *   2. Question / input (the connection test row) is at the TOP
- *   3. The model list and other detail sections sit below the test
+ * The inline UsageChip that previously occupied the left column has been
+ * REMOVED -- account credits and per-model quota now live on the global
+ * AntigravityUsageIndicator floating in the bottom-left navigation gutter,
+ * matching the Codex Usage chip pattern. This panel is now focused on
+ * connection / enable / model selection only.
  */
 
 import React from 'react';
-import { UsageChip } from './UsageChip';
 
 interface Model {
   id: string;
@@ -51,13 +50,7 @@ export function AntigravitySettings({
     && availableModels.every((m) => enabledModelIds.includes(m.id));
 
   return (
-    <div className="provider-panel antigravity-panel flex gap-6" data-testid="antigravity-settings">
-      {/* LEFT column: usage chip */}
-      <aside className="antigravity-usage-column flex flex-col gap-3 w-[260px] shrink-0">
-        <UsageChip />
-      </aside>
-
-      {/* RIGHT column: main panel content */}
+    <div className="provider-panel antigravity-panel flex flex-col" data-testid="antigravity-settings">
       <div className="antigravity-main-column flex-1 flex flex-col">
         {/* HEADER */}
         <div className="provider-panel-header mb-4 pb-4 border-b border-[var(--nim-border)]">
@@ -177,7 +170,7 @@ export function AntigravitySettings({
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
                 Default model is <strong>Gemini 3.5 Flash (High)</strong>. Usage
                 and quota come from your Antigravity plan and are shown in the
-                chip on the left.
+                Antigravity Usage chip in the bottom-left of the window.
               </p>
             </div>
           </>
