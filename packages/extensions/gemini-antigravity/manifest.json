@@ -20,7 +20,7 @@
         "isAgent": false,
         "isChat": true,
         "requiresApiKey": false,
-        "dynamicModels": true,
+        "dynamicModels": false,
         "transcriptParser": "claude-code",
         "defaultModelId": "antigravity-gemini:gemini-3-flash-agent",
         "icon": "gemini",
@@ -33,7 +33,7 @@
         "isAgent": true,
         "isChat": false,
         "requiresApiKey": false,
-        "dynamicModels": true,
+        "dynamicModels": false,
         "transcriptParser": "claude-code",
         "defaultModelId": "antigravity-gemini-agent:gemini-3-flash-agent",
         "icon": "gemini",
@@ -51,8 +51,17 @@
     }
   },
   "marketplace": {
-    "categories": ["ai-tools"],
-    "tags": ["gemini", "google", "ai", "antigravity", "agent", "chat"],
+    "categories": [
+      "ai-tools"
+    ],
+    "tags": [
+      "gemini",
+      "google",
+      "ai",
+      "antigravity",
+      "agent",
+      "chat"
+    ],
     "icon": "gemini",
     "featured": true,
     "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",
