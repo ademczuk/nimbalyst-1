@@ -62,7 +62,7 @@
       ],
       "minimumAppVersion": "1.0.0",
       "downloadUrl": "bundled:gemini-antigravity.nimext",
-      "checksum": "7754b8ff3d0d45f5fcdeae2764fb6aa421f66cd1426da11cb65ea2978357ff0f",
+      "checksum": "62dd74f69728070d171d34ffa6883b48212cf6bb085ec53c34452e7722b30d38",
       "repositoryUrl": "",
       "changelog": "Initial release as marketplace extension.",
       "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",

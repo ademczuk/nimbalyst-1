@@ -189,6 +189,7 @@ export class AntigravityAgentProvider {
 
       let finalText = '';
       let toolCallSeq = 0;
+      let sawText = false;
       const lastToolResult = new Map<string, { id: string; name: string; args: Record<string, unknown> }>();
 
       for await (const step of this.toolLoop.run(
@@ -226,11 +227,33 @@ export class AntigravityAgentProvider {
           }
         } else if (step.type === 'text') {
           finalText = step.content;
-          if (finalText) {
-            yield { type: 'text', content: finalText };
-          }
+          sawText = true;
+          // ALWAYS yield a text chunk so the renderer's stream pipeline registers
+          // the assistant's response. Dropping empty text chunks was the root
+          // cause of the silent no-response bug: when GetModelResponse returns
+          // whitespace or empty (which Gemini 3.5 Flash occasionally does on
+          // long meta-agent system prompts with no tool calls available), an
+          // `if (finalText)` guard suppressed the chunk entirely and the
+          // renderer never received `ai:streamResponse`, leaving the chat input
+          // "waiting". Substitute a visible placeholder when empty so the user
+          // sees that the turn completed. Mirrors the fix originally landed in
+          // commit 9abec8b7d on the runtime-side provider before this code
+          // moved into the marketplace extension.
+          const renderedText = finalText.trim().length === 0
+            ? '(model returned no text)'
+            : finalText;
+          yield { type: 'text', content: renderedText };
         } else if (step.type === 'complete') {
-          yield { type: 'complete', content: finalText, isComplete: true };
+          // Ensure the complete chunk also carries the rendered placeholder so
+          // the host's transcript on reload mirrors what the user saw during
+          // the turn. Persistence runs main-side in the host (the extension
+          // does not call logAgentMessage directly); the host derives the
+          // assistant message from the stream chunks, so the placeholder needs
+          // to ride the text/complete chunks.
+          const persistedText = finalText.trim().length === 0
+            ? (sawText ? '(model returned no text)' : '(no model response)')
+            : finalText;
+          yield { type: 'complete', content: persistedText, isComplete: true };
         }
       }
     } catch (err) {
