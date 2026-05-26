@@ -95,14 +95,23 @@ function normalizeToForwardSlash(p: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Minimum depth from filesystem root for a workspace path to be watchable.
- * Paths like `/`, `/Users`, `/home` are too broad and would flood FSEvents.
+ * Hard floor for workspace depth. Paths shallower than this are refused
+ * outright because watching them would FSEvent the entire filesystem.
+ * Windows: C:\ = 1. POSIX: /Users = 1.
  */
-const MIN_WORKSPACE_DEPTH = 3;
+const MIN_WORKSPACE_DEPTH = 2;
+
+/**
+ * Soft warning floor. Depths in [SHALLOW_WORKSPACE_DEPTH, recommended)
+ * are allowed but logged as a warning so the user sees why a large
+ * top-level workspace (e.g. C:\Projects) may produce many watcher events.
+ */
+const SHALLOW_WORKSPACE_DEPTH = 3;
 
 /**
  * Returns the depth of a path from the filesystem root.
- * `/` = 0, `/Users` = 1, `/Users/ghinkle` = 2, `/Users/ghinkle/project` = 3
+ * `/` = 0, `/Users` = 1, `/Users/ghinkle` = 2, `/Users/ghinkle/project` = 3.
+ * Windows: `C:\` = 0, `C:\Projects` = 2 (drive letter counts as one segment).
  */
 function pathDepth(p: string): number {
   const resolved = path.resolve(p);
@@ -110,17 +119,39 @@ function pathDepth(p: string): number {
   return segments.length;
 }
 
+/** Outcome of workspace-path safety check. */
+type WorkspacePathCheck =
+  | { kind: 'ok' }
+  | { kind: 'warning'; message: string }
+  | { kind: 'refuse'; message: string };
+
 /**
- * Validate that a workspace path is safe to watch recursively.
- * Returns an error message if unsafe, or null if safe.
+ * Validate that a workspace path is safe to watch recursively. Returns a
+ * three-state result so callers can warn-and-proceed for borderline cases
+ * (depth 2: `C:\Projects`, `/home/me`) and refuse only the truly dangerous
+ * ones (depth < 2: `C:\`, `/`).
  */
-function validateWorkspacePath(workspacePath: string): string | null {
+function checkWorkspacePath(workspacePath: string): WorkspacePathCheck {
   const depth = pathDepth(workspacePath);
   if (depth < MIN_WORKSPACE_DEPTH) {
-    return `Workspace path "${workspacePath}" is too shallow (depth ${depth}, minimum ${MIN_WORKSPACE_DEPTH}). ` +
-      `Watching this path would monitor the entire filesystem and freeze the process.`;
+    return {
+      kind: 'refuse',
+      message:
+        `Workspace path "${workspacePath}" is too shallow ` +
+        `(depth ${depth}, minimum ${MIN_WORKSPACE_DEPTH}). ` +
+        `Watching this path would monitor the entire filesystem and freeze the process.`,
+    };
   }
-  return null;
+  if (depth < SHALLOW_WORKSPACE_DEPTH) {
+    return {
+      kind: 'warning',
+      message:
+        `Workspace path "${workspacePath}" is shallow ` +
+        `(depth ${depth}, recommended >= ${SHALLOW_WORKSPACE_DEPTH}). ` +
+        `Watching may generate a large number of file events.`,
+    };
+  }
+  return { kind: 'ok' };
 }
 
 // ---------------------------------------------------------------------------
@@ -498,15 +529,23 @@ export async function subscribe(
     return;
   }
 
-  // Safety: refuse to watch paths that are too close to the filesystem root
-  const validationError = validateWorkspacePath(key);
-  if (validationError) {
-    logger.main.error('[WorkspaceEventBus] Refusing to watch unsafe path:', {
-      workspacePath: key,
-      subscriberId,
-      reason: validationError,
-    });
+  // Safety: refuse paths too close to the filesystem root; warn on borderline.
+  // The single-line string form here keeps the log greppable and avoids
+  // transport-dependent rendering quirks where some log sinks stringify the
+  // object-as-second-arg as `[object Object]` instead of pretty-printing it.
+  const check = checkWorkspacePath(key);
+  if (check.kind === 'refuse') {
+    logger.main.error(
+      `[WorkspaceEventBus] Refusing to watch unsafe path: ${check.message} ` +
+        `(subscriberId=${subscriberId}, workspacePath=${key})`,
+    );
     return;
+  }
+  if (check.kind === 'warning') {
+    logger.main.warn(
+      `[WorkspaceEventBus] Watching shallow workspace path: ${check.message} ` +
+        `(subscriberId=${subscriberId}, workspacePath=${key})`,
+    );
   }
 
   const ig = await loadGitignoreFilter(workspacePath);
