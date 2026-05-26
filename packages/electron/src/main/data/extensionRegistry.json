@@ -3,38 +3,6 @@
   "generatedAt": "2026-04-21T17:42:59.236Z",
   "extensions": [
     {
-      "id": "gemini-cli",
-      "name": "Google Gemini (CLI)",
-      "description": "Google Gemini agent via the gemini CLI (ACP protocol, OAuth). Installs as a marketplace extension and registers the gemini-cli provider. Requires the `gemini` CLI (`npm i -g @google/gemini-cli`) to be on PATH and signed in once.",
-      "version": "1.0.0",
-      "author": "Nimbalyst",
-      "categories": [
-        "ai-tools"
-      ],
-      "tags": [
-        "gemini",
-        "google",
-        "ai",
-        "agent",
-        "cli"
-      ],
-      "icon": "smart_toy",
-      "screenshots": [],
-      "downloads": 0,
-      "featured": true,
-      "permissions": [
-        "process",
-        "network",
-        "filesystem"
-      ],
-      "minimumAppVersion": "1.0.0",
-      "downloadUrl": "bundled:gemini-cli.nimext",
-      "checksum": "cc5cf1bc89bad6b81919f2706532840af1e0f68852bc9d4a7aa1635898c76925",
-      "repositoryUrl": "",
-      "changelog": "Initial release.",
-      "local": true
-    },
-    {
       "id": "gemini-antigravity",
       "name": "Google Gemini (Antigravity)",
       "description": "Google Gemini 3.5 Flash via the Antigravity language server. Contributes both chat and agent providers. Auth rides your existing ~/.gemini login - no API key required.",
@@ -159,7 +127,7 @@
     {
       "id": "com.nimbalyst.astro",
       "name": "Astro",
-      "description": "Visually edit Astro website pages inline — changes write back to YAML data files",
+      "description": "Visually edit Astro website pages inline â€” changes write back to YAML data files",
       "version": "0.2.0",
       "author": "Unknown",
       "categories": [
