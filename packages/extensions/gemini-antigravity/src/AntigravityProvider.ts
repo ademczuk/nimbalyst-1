@@ -47,6 +47,11 @@ export class AntigravityProvider {
   private modelKey: string = AntigravityProvider.DEFAULT_MODEL;
   private aborted = false;
 
+  /** Read back the last initialize() config (for debugging). */
+  getConfig(): Readonly<AntigravityConfig> {
+    return this.config;
+  }
+
   // The extension turn bridge constructs with `new Ctor({ spawn })`; we accept
   // and ignore the host - server lifecycle is handled in main behind IPC.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -72,8 +77,8 @@ export class AntigravityProvider {
 
   // --- Lifecycle ---
 
-  async initialize(config: unknown): Promise<void> {
-    const cfg = (config as AntigravityConfig) || {};
+  async initialize(rawConfig: unknown): Promise<void> {
+    const cfg = (rawConfig as AntigravityConfig) || {};
     this.config = cfg;
     if (cfg.model) {
       // Accept either the provider-prefixed id ('antigravity-gemini:key') or a bare key.

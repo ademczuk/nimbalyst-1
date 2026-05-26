@@ -1122,10 +1122,11 @@ const defaultProviders: Record<string, ProviderConfig> = {
   // fresh installs see it enabled in the model picker once the extension hydrates.
   'gemini-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
   lmstudio: { enabled: true, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
-  // Antigravity-backed Gemini (chat provider). Auth rides ~/.gemini; no API key.
-  'antigravity-gemini': { enabled: true, testStatus: 'idle' },
-  // Antigravity-backed Gemini (agent provider - tool-loop over GetModelResponse).
-  'antigravity-gemini-agent': { enabled: true, testStatus: 'idle' },
+  // antigravity-gemini and antigravity-gemini-agent ship as a marketplace
+  // extension (`gemini-antigravity`). They get their defaults from the
+  // descriptor that the extension registers via aiProviders contribution,
+  // and the ProviderRegistry.list() loop below catches them once the
+  // extension system hydrates. We intentionally do NOT seed defaults here.
 };
 
 for (const descriptor of ProviderRegistry.list()) {

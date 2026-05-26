@@ -14,6 +14,11 @@ export type SettingsCategory =
   | 'copilot-cli'
   | 'gemini-cli'
   | 'lmstudio'
+  // antigravity-gemini and antigravity-gemini-agent now ship as a marketplace
+  // extension (`gemini-antigravity`). Their sidebar entries are contributed
+  // dynamically once the extension is installed; the literal IDs are kept here
+  // as a type-level allow-list so legacy code paths (SettingsView, urlState)
+  // still type-check while routing through the registry.
   | 'antigravity-gemini'
   | 'antigravity-gemini-agent'
   | 'notifications'
@@ -159,13 +164,8 @@ Best for complex coding tasks.`,
           statusDot: getStatusDot('copilot-cli'),
           isAlpha: true,
         },
-        {
-          id: 'antigravity-gemini-agent',
-          name: 'Gemini Agent (Antigravity)',
-          icon: <MaterialSymbol icon="smart_toy" size={16} />,
-          statusDot: getStatusDot('antigravity-gemini-agent'),
-          isAlpha: true,
-        },
+        // antigravity-gemini-agent now ships as a marketplace extension and
+        // appears here only when the user installs `gemini-antigravity`.
       ],
     },
     {
@@ -194,13 +194,8 @@ Best for quick edits and tasks that do not require multi-file operations.`,
           icon: getProviderIcon('lmstudio', { size: 16 }),
           statusDot: getStatusDot('lmstudio'),
         },
-        {
-          id: 'antigravity-gemini',
-          name: 'Gemini (Antigravity)',
-          icon: <MaterialSymbol icon="auto_awesome" size={16} />,
-          statusDot: getStatusDot('antigravity-gemini'),
-          isAlpha: true,
-        },
+        // antigravity-gemini now ships as a marketplace extension and appears
+        // here only when the user installs `gemini-antigravity`.
       ],
     },
     {

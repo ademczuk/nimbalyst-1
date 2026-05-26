@@ -3025,21 +3025,22 @@ export class AIService {
             };
           }
           try {
-            // Both providers fetch from the same local catalog; the agent provider
-            // surfaces its own subset/labels via AntigravityAgentProvider.getModels().
-            let models;
-            if (provider === 'antigravity-gemini-agent') {
-              const { AntigravityAgentProvider } = await import(
-                '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityAgentProvider'
-              );
-              models = await AntigravityAgentProvider.getModels();
-            } else {
-              const { AntigravityProvider } = await import(
-                '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityProvider'
-              );
-              models = await AntigravityProvider.getModels();
+            // The chat and agent providers (now shipped by the gemini-antigravity
+            // marketplace extension) surface different subsets of the catalog; for
+            // the connection test we just need to confirm the server returns a
+            // non-empty Gemini Flash catalog. Both subsets are a subset of these
+            // known keys (mirror SURFACED_MODEL_KEYS in the extension provider).
+            const FLASH_KEYS = new Set([
+              'gemini-3-flash-agent',
+              'gemini-3.5-flash-low',
+              'gemini-3.5-flash-extra-low',
+            ]);
+            const catalog = await AntigravityServerManager.shared().getAvailableModels();
+            let flashCount = 0;
+            for (const key of catalog.keys()) {
+              if (FLASH_KEYS.has(key)) flashCount++;
             }
-            if (!models || models.length === 0) {
+            if (flashCount === 0) {
               return {
                 success: false,
                 error:
@@ -3047,7 +3048,7 @@ export class AIService {
                   'were returned. Make sure the Antigravity IDE is up to date.',
               };
             }
-            return { success: true, provider, models: models.length };
+            return { success: true, provider, models: flashCount };
           } catch (err: any) {
             return {
               success: false,

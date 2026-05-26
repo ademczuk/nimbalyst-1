@@ -84,6 +84,11 @@ export class AntigravityAgentProvider {
   private modelKey: string = AntigravityAgentProvider.DEFAULT_MODEL;
   private abortController: AbortController | null = null;
 
+  /** Read back the last initialize() config (for debugging). */
+  getConfig(): Readonly<AntigravityAgentConfig> {
+    return this.config;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(_host?: AntigravityAgentProviderHost) {
     this.toolLoop = new AntigravityToolLoopProtocol({ modelKey: this.modelKey });
@@ -107,8 +112,8 @@ export class AntigravityAgentProvider {
     return PROVIDER_ID;
   }
 
-  async initialize(config: unknown): Promise<void> {
-    const cfg = (config as AntigravityAgentConfig) || {};
+  async initialize(rawConfig: unknown): Promise<void> {
+    const cfg = (rawConfig as AntigravityAgentConfig) || {};
     this.config = cfg;
     if (cfg.model) {
       this.modelKey = cfg.model.includes(':')

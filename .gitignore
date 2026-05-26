@@ -221,3 +221,6 @@ packages/electron/data/
 .rag-cache/
 delegation-log.txt
 test_kcs.mjs
+
+# Local Antigravity / Gemini IDE profile cache (not for version control)
+.gemini-profile/

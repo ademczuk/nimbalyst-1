@@ -18,8 +18,6 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
-import { AntigravityProvider } from './providers/antigravity/AntigravityProvider';
-import { AntigravityAgentProvider } from './providers/antigravity/AntigravityAgentProvider';
 
 interface HeavyImpl {
   createInstance: () => AIProvider;
@@ -68,17 +66,12 @@ const HEAVY: Record<string, HeavyImpl> = {
     getModels: () => CopilotCLIProvider.getModels(),
     getDefaultModel: () => CopilotCLIProvider.getDefaultModel(),
   },
-  'antigravity-gemini': {
-    createInstance: () => new AntigravityProvider(),
-    // Returns empty array if the Antigravity server can't be reached.
-    getModels: () => AntigravityProvider.getModels(),
-    getDefaultModel: () => `antigravity-gemini:${AntigravityProvider.DEFAULT_MODEL}`,
-  },
-  'antigravity-gemini-agent': {
-    createInstance: () => new AntigravityAgentProvider(),
-    getModels: () => AntigravityAgentProvider.getModels(),
-    getDefaultModel: () => AntigravityAgentProvider.getDefaultModel(),
-  },
+  // antigravity-gemini and antigravity-gemini-agent ship as a marketplace
+  // extension (`gemini-antigravity`). They register through the aiProviders
+  // contribution + the main-side ExtensionProviderProxy. The runtime keeps
+  // AntigravityServerManager and AntigravityUsageMeter as plain library
+  // classes so the main-side `antigravity:*` IPC bridge can call into them.
+  //
   // gemini-cli is no longer a built-in: it ships as a marketplace extension
   // and registers itself through the aiProviders contribution + the main-side
   // ExtensionProviderProxy. The class statics remain wired in main only as a

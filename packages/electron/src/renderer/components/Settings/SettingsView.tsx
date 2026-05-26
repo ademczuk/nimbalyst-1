@@ -15,8 +15,11 @@ import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
 import { GeminiPanel } from '../GlobalSettings/panels/GeminiPanel';
 import { LMStudioPanel } from '../GlobalSettings/panels/LMStudioPanel';
-import { AntigravityPanel } from '../GlobalSettings/panels/AntigravityPanel';
-import { AntigravityAgentPanel } from '../GlobalSettings/panels/AntigravityAgentPanel';
+// antigravity-gemini and antigravity-gemini-agent now ship as a marketplace
+// extension (`gemini-antigravity`). The extension contributes its own
+// settings panel via the settingsPanelComponent contribution; the host
+// renders it through the extension settings-panel registry instead of the
+// hardcoded panels that used to live here.
 import { AdvancedPanel } from '../GlobalSettings/panels/AdvancedPanel';
 import { AgentFeaturesPanel } from './AgentFeaturesPanel';
 import { BetaFeaturesPanel } from '../GlobalSettings/panels/BetaFeaturesPanel';
@@ -549,10 +552,11 @@ export function SettingsView({
         return wrapWithOverride('gemini-cli', 'Google Gemini', <GeminiPanel {...commonProps} />);
       case 'lmstudio':
         return wrapWithOverride('lmstudio', 'LM Studio', <LMStudioPanel {...commonProps} />);
-      case 'antigravity-gemini':
-        return wrapWithOverride('antigravity-gemini', 'Gemini (Antigravity)', <AntigravityPanel {...commonProps} />);
-      case 'antigravity-gemini-agent':
-        return wrapWithOverride('antigravity-gemini-agent', 'Gemini Agent (Antigravity)', <AntigravityAgentPanel {...commonProps} />);
+      // The antigravity-gemini and antigravity-gemini-agent panels now live in
+      // the gemini-antigravity marketplace extension. When the extension is
+      // installed and enabled, its settings panel is rendered through the
+      // extension settings-panel registry (see ExtensionSettingsPanel). Falling
+      // through here keeps the route a no-op when the extension is uninstalled.
       case 'advanced':
         // AdvancedPanel is self-contained - uses Jotai atoms and IPC directly
         return <AdvancedPanel />;
