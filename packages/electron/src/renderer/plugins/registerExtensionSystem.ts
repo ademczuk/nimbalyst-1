@@ -721,16 +721,34 @@ function initializeExtensionProviderModelBridge(): void {
   window.electronAPI.on(
     'ext-provider:get-models',
     (payload: { requestId: string; providerId: string }) => {
+      // Diagnostic: confirm the listener fired and which window received it.
+      // Without this log we cannot distinguish "listener not wired" from
+      // "listener fired but extension.getModels() hung" on the main side.
+      console.log(
+        `[ExtensionProviderBridge] ext-provider:get-models received: requestId=${payload?.requestId} providerId=${payload?.providerId} captureMode=${new URLSearchParams(window.location.search).get('mode') === 'capture'}`,
+      );
       void (async () => {
         const send = (
           models: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }>,
           error?: string,
         ) => {
-          window.electronAPI.send('ext-provider:get-models:response', {
-            requestId: payload.requestId,
-            models,
-            error,
-          });
+          try {
+            window.electronAPI.send('ext-provider:get-models:response', {
+              requestId: payload.requestId,
+              models,
+              error,
+            });
+            console.log(
+              `[ExtensionProviderBridge] ext-provider:get-models:response sent: requestId=${payload?.requestId} ${
+                error ? `error="${error}"` : `${models.length} model(s)`
+              }`,
+            );
+          } catch (sendErr) {
+            console.error(
+              `[ExtensionProviderBridge] ext-provider:get-models:response send failed: requestId=${payload?.requestId}`,
+              sendErr,
+            );
+          }
         };
 
         try {

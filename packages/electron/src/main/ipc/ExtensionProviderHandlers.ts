@@ -19,6 +19,7 @@ import { BrowserWindow, ipcMain, type WebContents } from 'electron';
 import { ProviderRegistry, type ProviderDescriptor } from '@nimbalyst/runtime/ai/server';
 import type { AIModel } from '@nimbalyst/runtime/ai/server/types';
 import { ExtensionProviderProxy } from '../services/ai/ExtensionProviderProxy';
+import { windows, windowStates } from '../window/windowState';
 import { logger } from '../utils/logger';
 
 /** Metadata the renderer sends (the renderer-safe descriptor fields). */
@@ -34,14 +35,60 @@ const pendingModelRequests = new Map<string, PendingModelRequest>();
 let modelRequestSeq = 0;
 let modelResponseListenerWired = false;
 
-function resolveFirstWebContents(): WebContents | null {
-  const windows = BrowserWindow.getAllWindows();
-  for (const w of windows) {
-    if (!w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
-      return w.webContents;
+/**
+ * Bridge timeout (ms). Generous on purpose: the renderer's getModels() routes
+ * through `antigravity:get-models` which can have to cold-start the local
+ * Antigravity language server on first call. That spawn + handshake takes
+ * 5-15s in the worst case, so a 15s budget for the WHOLE round trip is too
+ * tight and the bridge times out before the renderer has a chance to reply.
+ * 30s leaves room for cold start and still bounds the wait if the renderer
+ * truly never responds (e.g. window torn down mid-request).
+ */
+const MODEL_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Pick the webContents that should answer an extension-provider IPC.
+ *
+ * The renderer-side bridge listener (initializeExtensionProviderModelBridge()
+ * in registerExtensionSystem.ts) is wired in every renderer that finishes
+ * registerExtensionSystem(). That includes the OffscreenEditorManager capture
+ * window (`?mode=capture`) which loads the same renderer entry point. A naive
+ * `BrowserWindow.getAllWindows()[0]` can therefore pick the capture window or
+ * an auxiliary window (About, AIUsageReport, etc.) over the actual workspace
+ * window the user is interacting with. To make the routing deterministic we
+ * prefer the WindowManager-tracked workspace windows (the `windows` Map only
+ * contains windows opened via createWindow(), so capture/About/etc. are
+ * excluded by construction). We broadcast to ALL such workspace windows and
+ * accept the first response back - if for some reason one window hasn't yet
+ * loaded its extensions but another has, the loaded one wins.
+ */
+function resolveCandidateWebContents(): WebContents[] {
+  const out: WebContents[] = [];
+
+  // Prefer WindowManager-tracked workspace/agentic windows. These are the
+  // only windows guaranteed to have run registerExtensionSystem() to
+  // completion in the normal (non-capture) renderer mode.
+  for (const [windowId, win] of windows) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+    const state = windowStates.get(windowId);
+    if (state?.mode === 'workspace' || state?.mode === 'agentic-coding') {
+      out.push(win.webContents);
     }
   }
-  return null;
+
+  // Fallback: if no workspace window is tracked yet (very early boot, or all
+  // windows are in 'document' mode), include any non-destroyed BrowserWindow
+  // webContents. The capture window also wires the bridge listener, so even
+  // if we pick it, the listener will respond.
+  if (out.length === 0) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        out.push(win.webContents);
+      }
+    }
+  }
+
+  return out;
 }
 
 function wireModelResponseListenerOnce(): void {
@@ -55,6 +102,12 @@ function wireModelResponseListenerOnce(): void {
       if (!pending) return;
       pendingModelRequests.delete(payload.requestId);
       clearTimeout(pending.timer);
+      const modelCount = Array.isArray(payload.models) ? payload.models.length : 0;
+      logger.main.info(
+        `[ExtensionProvider] ext-provider:get-models response for ${payload.requestId}: ${
+          payload.error ? `error="${payload.error}"` : `${modelCount} model(s)`
+        }`,
+      );
       if (payload.error) {
         pending.reject(new Error(payload.error));
       } else {
@@ -68,25 +121,52 @@ function wireModelResponseListenerOnce(): void {
  * Request the renderer to fetch the model catalog for an extension provider.
  * The renderer-side initializeExtensionProviderModelBridge() listener calls
  * the extension impl's static getModels() and replies with the result.
+ *
+ * Sends the request to every workspace webContents. The first one to reply
+ * wins; later replies for the same requestId are ignored by the response
+ * listener (the pending entry is deleted on first resolve/reject).
  */
 function requestModelsFromRenderer(providerId: string): Promise<AIModel[]> {
   wireModelResponseListenerOnce();
 
-  const wc = resolveFirstWebContents();
-  if (!wc) {
+  const candidates = resolveCandidateWebContents();
+  if (candidates.length === 0) {
+    logger.main.warn(
+      `[ExtensionProvider] requestModelsFromRenderer('${providerId}'): no live webContents`,
+    );
     return Promise.resolve([]);
   }
 
   const requestId = `extmodels-${Date.now()}-${++modelRequestSeq}`;
+  logger.main.info(
+    `[ExtensionProvider] dispatching ext-provider:get-models id=${requestId} provider=${providerId} to ${candidates.length} webContents`,
+  );
 
   return new Promise<AIModel[]>((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingModelRequests.delete(requestId);
-      reject(new Error(`ext-provider:get-models timed out for '${providerId}'`));
-    }, 15_000);
+      reject(
+        new Error(
+          `ext-provider:get-models timed out for '${providerId}' after ${MODEL_REQUEST_TIMEOUT_MS}ms (sent to ${candidates.length} webContents)`,
+        ),
+      );
+    }, MODEL_REQUEST_TIMEOUT_MS);
 
     pendingModelRequests.set(requestId, { resolve, reject, timer });
-    wc.send('ext-provider:get-models', { requestId, providerId });
+
+    for (const wc of candidates) {
+      try {
+        wc.send('ext-provider:get-models', { requestId, providerId });
+      } catch (err) {
+        // Send-after-destroyed or similar; don't fail the whole request if
+        // ONE webContents is wedged, the others may still respond.
+        logger.main.warn(
+          `[ExtensionProvider] webContents.send failed for ${providerId} on wc#${wc.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   });
 }
 
@@ -128,4 +208,3 @@ export function registerExtensionProviderHandlers(): void {
     return { success: true };
   });
 }
-
