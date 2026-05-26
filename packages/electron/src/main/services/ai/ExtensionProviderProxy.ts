@@ -25,6 +25,12 @@ import {
 import { findWindowByWorkspace } from '../../window/WindowManager';
 import { logger } from '../../utils/logger';
 
+/** Preview helper for ai-debug logging. */
+function preview(value: string | undefined, max = 100): string {
+  if (!value) return '';
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+}
+
 /** Provider EventEmitter events the streaming handler subscribes to. The
  * renderer forwards these from the extension impl so the proxy can re-emit
  * them and the handler's listeners fire exactly as they do for built-ins. */
@@ -202,6 +208,19 @@ export class ExtensionProviderProxy extends BaseAIProvider {
       return;
     }
 
+    // Persist the user input row up-front so the transcript shows the prompt
+    // immediately and the session-completion path has a contiguous history.
+    // Built-in providers (e.g. ClaudeProvider) do this themselves; the proxy
+    // owes the same contract on behalf of extension impls that run in the
+    // renderer (and have no main-side DB access).
+    if (sessionId && message) {
+      try {
+        await this.logAgentMessage(sessionId, this.providerId, 'input', message, undefined, false, undefined, true);
+      } catch (err) {
+        logger.main.warn(`[ExtensionProviderProxy] failed to log user input for ${sessionId}: ${String(err)}`);
+      }
+    }
+
     const queue = new ChunkQueue();
     const sink: TurnSink = {
       proxy: this,
@@ -225,11 +244,96 @@ export class ExtensionProviderProxy extends BaseAIProvider {
       providerSessionData: sessionId ? this.sessionData.get(sessionId) : undefined,
     });
 
+    // Buffer assistant text across `text` chunks so we can emit a single
+    // canonical output row on `complete`. Most extension impls yield one final
+    // text chunk and then a complete chunk carrying the same content; the
+    // buffer also tolerates impls that stream multiple text fragments.
+    let assistantTextBuffer = '';
+    let loggedFinalText = false;
+
+    const logFinalAssistantText = async (textOverride?: string) => {
+      if (!sessionId) return;
+      const text = textOverride !== undefined ? textOverride : assistantTextBuffer;
+      if (!text || loggedFinalText) return;
+      try {
+        await this.logAgentMessage(
+          sessionId,
+          this.providerId,
+          'output',
+          JSON.stringify({ type: 'text', content: text }),
+          undefined,
+          false,
+          undefined,
+          true,
+        );
+        loggedFinalText = true;
+        logger.ai.info('[ExtensionProviderProxy] logged final assistant text', {
+          providerId: this.providerId,
+          sessionId,
+          length: text.length,
+          preview: preview(text),
+        });
+      } catch (err) {
+        logger.main.warn(
+          `[ExtensionProviderProxy] failed to log assistant text for ${sessionId}: ${String(err)}`,
+        );
+      }
+    };
+
+    const logToolCall = async (chunk: StreamChunk) => {
+      if (!sessionId || !chunk.toolCall) return;
+      try {
+        // Tool calls land as two chunks from the agent: first an args-only
+        // chunk, then a follow-up with `result` populated. Only persist the
+        // resolved row so the transcript shows the executed tool call once.
+        if (chunk.toolCall.result === undefined) return;
+        await this.logAgentMessage(
+          sessionId,
+          this.providerId,
+          'output',
+          JSON.stringify({
+            type: 'tool_call',
+            toolCall: {
+              id: chunk.toolCall.id,
+              name: chunk.toolCall.name,
+              arguments: chunk.toolCall.arguments,
+              result: chunk.toolCall.result,
+            },
+          }),
+        );
+      } catch (err) {
+        logger.main.warn(
+          `[ExtensionProviderProxy] failed to log tool_call for ${sessionId}: ${String(err)}`,
+        );
+      }
+    };
+
     try {
       while (true) {
         const r = await queue.next();
         if (r.done) break;
-        yield r.value;
+        const chunk = r.value;
+
+        // Persist before yielding so the renderer's `ai:messages-logged-batch`
+        // event fires (which is how the transcript actually re-renders).
+        if (chunk.type === 'text' && typeof chunk.content === 'string') {
+          assistantTextBuffer += chunk.content;
+        } else if (chunk.type === 'tool_call') {
+          await logToolCall(chunk);
+        } else if (chunk.type === 'complete') {
+          const finalText = typeof chunk.content === 'string' && chunk.content.length > 0
+            ? chunk.content
+            : assistantTextBuffer;
+          await logFinalAssistantText(finalText);
+        }
+
+        yield chunk;
+      }
+      // Stream ended without a `complete` chunk -- some impls just drop the
+      // generator after the last text. Flush the buffer so the transcript
+      // still gets the assistant row.
+      if (!loggedFinalText && assistantTextBuffer.length > 0) {
+        await logFinalAssistantText();
       }
     } finally {
       activeSinks.delete(turnId);
