@@ -13,6 +13,8 @@
 
 import { atom } from 'jotai';
 import { providersAtom } from './appSettings';
+import { extensionProviderRegistryVersionAtom } from './extensionProviderRegistry';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 
 export interface AntigravityModelQuota {
   model: string;
@@ -48,17 +50,36 @@ export const antigravityUsageAtom = atom<AntigravityUsageData | null>(null);
 
 /**
  * Visible only when at least one of the two contributed antigravity providers
- * is enabled. We intentionally do NOT key off ProviderRegistry.has() alone:
- * the descriptor is registered even when the extension is installed but the
- * provider has been manually disabled by the user, and we don't want to keep
- * polling getUserStatus (which spawns/keeps-warm the local server) in that
- * case.
+ * is BOTH enabled in settings AND currently registered in the runtime
+ * ProviderRegistry. Both gates are required:
+ *
+ *   1. providerSettings.enabled === true -- user has not opted out. Without
+ *      this we would keep polling getUserStatus (which spawns/keeps-warm the
+ *      local server) for a manually-disabled provider.
+ *
+ *   2. ProviderRegistry.has(id) -- the extension is currently INSTALLED and
+ *      loaded. Without this gate the chip stayed visible after the
+ *      gemini-antigravity extension was uninstalled, because providerSettings
+ *      retains enabled:true (uninstall doesn't reset per-provider settings
+ *      slices on disk). The chip then pointed at a provider whose descriptor
+ *      had been removed from both renderer and main registries, leaving its
+ *      Refresh button as a no-op (Bug L).
+ *
+ * The extensionProviderRegistryVersionAtom dependency makes this atom react
+ * to ProviderRegistry mutations (the registry itself is a plain Map, not
+ * Jotai-reactive). It is bumped in registerExtensionSystem.ts when an
+ * extension is loaded or unloaded.
  */
 export const antigravityIndicatorVisibleAtom = atom((get) => {
   const providers = get(providersAtom);
-  const chat = providers['antigravity-gemini']?.enabled === true;
-  const agent = providers['antigravity-gemini-agent']?.enabled === true;
-  return chat || agent;
+  // Force re-evaluation on extension load/unload so ProviderRegistry.has()
+  // results reflect the current install state.
+  get(extensionProviderRegistryVersionAtom);
+  const chatEnabled = providers['antigravity-gemini']?.enabled === true;
+  const agentEnabled = providers['antigravity-gemini-agent']?.enabled === true;
+  const chatInstalled = ProviderRegistry.has('antigravity-gemini');
+  const agentInstalled = ProviderRegistry.has('antigravity-gemini-agent');
+  return (chatEnabled && chatInstalled) || (agentEnabled && agentInstalled);
 });
 
 /** Percentage of monthly prompt credits remaining (null if not reported). */

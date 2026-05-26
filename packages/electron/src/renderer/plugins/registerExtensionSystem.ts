@@ -21,6 +21,7 @@ import {
   setEnsureEditorCallback,
 } from '@nimbalyst/runtime';
 import { ProviderRegistry, type ProviderDescriptor } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
+import { bumpExtensionProviderRegistryVersion } from '../store/atoms/extensionProviderRegistry';
 import { initializeExtensionProviderTurnBridge } from './extensionProviderTurnBridge';
 import { ExtensionPlatformServiceImpl } from '../services/ExtensionPlatformServiceImpl';
 import { initializeExtensionEditorBridge } from '../extensions/ExtensionEditorBridge';
@@ -173,6 +174,11 @@ function setupExtensionDevListeners(): void {
           ProviderRegistry.unregister(id);
           void window.electronAPI.invoke('ext-provider:unregister', id);
         }
+        // Notify Jotai-reactive atoms (e.g. AntigravityUsageIndicator's
+        // visibility atom) that the registry shape changed. Without this the
+        // chip / model picker entries linger after uninstall because their
+        // derived atoms never re-run (Bug L).
+        bumpExtensionProviderRegistryVersion();
         console.log(
           `[ExtensionSystem] Unregistered ${aiProviderIds.length} AI provider(s) for ${data.extensionId}: ${aiProviderIds.join(', ')}`,
         );
@@ -699,6 +705,10 @@ export async function initializeAiProviderBridge(): Promise<void> {
     registrations.push(window.electronAPI.invoke('ext-provider:register', descriptor));
   }
   await Promise.all(registrations);
+  // Notify Jotai-reactive atoms (e.g. AntigravityUsageIndicator's visibility
+  // atom) that the renderer ProviderRegistry shape changed so install-state
+  // surfaces immediately without a full re-render (Bug L).
+  bumpExtensionProviderRegistryVersion();
 }
 
 /**
