@@ -39,7 +39,16 @@
         "icon": "gemini",
         "settingsPanelComponent": "AntigravityAgentSettings"
       }
-    ]
+    ],
+    "configuration": {
+      "properties": {
+        "didAutoEnableOnInstall": {
+          "type": "boolean",
+          "default": false,
+          "description": "Internal sentinel: true after the extension has auto-enabled its providers and fired a one-shot Test connection. Prevents the auto-enable flow from running on every boot."
+        }
+      }
+    }
   },
   "marketplace": {
     "categories": ["ai-tools"],
