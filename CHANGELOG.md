@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-uploading a local source into a shared markdown document now waits for the collab write to be acknowledged before tearing down the headless sync client.
 <!-- Bug fixes go here -->
 - Codex session-naming reminder no longer leaks into the chat transcript; its turn output is tagged so the transcript hides it. (#420)
+- Mobile sync now picks up Codex sessions running in git worktrees by resolving worktree workspaceIds to the parent project path when matching against enabled sync projects. (#430) Thanks @stamkivi.
 
 ### Removed
 <!-- Removed features go here -->
