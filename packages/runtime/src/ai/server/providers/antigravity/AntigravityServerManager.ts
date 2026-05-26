@@ -34,10 +34,15 @@ const SERVICE = 'exa.language_server_pb.LanguageServerService';
 // "This version of Antigravity is no longer supported." Keep in sync with the IDE.
 const OVERRIDE_IDE_VERSION = '2.0.6';
 
-// Default standalone-spawn port. Must avoid Windows excluded TCP ranges
-// (netsh int ipv4 show excludedportrange protocol=tcp). 51717 is clear; the
-// 50000-50600 / 52649-52848 ranges are reserved on a typical Windows setup.
-const DEFAULT_SPAWN_PORT = 51717;
+// Candidate standalone-spawn ports. Tried in order; the first one we can bind
+// to wins. Windows dynamically reserves TCP port ranges (Hyper-V / WSL after
+// reboot), so a single hardcoded port WILL eventually hit WSAEACCES "bind:
+// access permissions" and the language server will exit code 1 silently.
+// 51717 was the original choice but lives inside the 51711-51810 range that
+// Windows frequently reserves; the rest are spread across less-contested
+// neighborhoods. Run `netsh int ipv4 show excludedportrange protocol=tcp` on
+// Windows to see the current dynamic exclusions.
+const SPAWN_PORT_CANDIDATES = [51717, 8765, 13456, 21345, 31987, 41234] as const;
 
 export interface AntigravityEndpoint {
   httpsPort: number;
@@ -335,49 +340,86 @@ export class AntigravityServerManager {
     }
 
     const csrf = `nimbalyst-${randomUUID()}`;
-    const port = DEFAULT_SPAWN_PORT;
-    const args = [
-      '--standalone',
-      '--subclient_type', 'hub',
-      '--override_ide_name', 'antigravity',
-      '--override_ide_version', OVERRIDE_IDE_VERSION, // REQUIRED: avoids version gate
-      '--override_user_agent_name', 'antigravity',
-      '--api_server_url', 'https://generativelanguage.googleapis.com',
-      '--cloud_code_endpoint', 'https://daily-cloudcode-pa.googleapis.com',
-      '--csrf_token', csrf,
-      '--https_server_port', String(port),
-      '--app_data_dir', 'antigravity',
-      '--enable_sidecars',
-    ];
-    const child = spawn(binary, args, {
-      stdio: 'ignore',
-      detached: false,
-      windowsHide: true,
-    });
-    this.child = child;
-    child.on('exit', () => {
-      // If our owned server dies, drop the endpoint so the next call respawns.
-      if (this.child === child) {
-        this.child = null;
-        this.endpoint = null;
-        this.enumCache.clear();
-      }
-    });
 
-    const ep: AntigravityEndpoint = { httpsPort: port, csrf, owned: true };
-    // Poll Heartbeat until the server binds (observed ~2s).
-    const deadline = Date.now() + 60_000;
-    let lastErr: unknown = null;
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null) {
-        throw new Error(`Antigravity server exited early (code ${child.exitCode})`);
+    // Try each candidate port in turn. Bind failures (Windows port-exclusion
+    // ranges, port in use, etc.) cause an immediate exit with the bind error
+    // in stderr -- we capture it, log it, and try the next port instead of
+    // surfacing a useless "exited code 1" to the user.
+    const bindErrors: Array<{ port: number; reason: string }> = [];
+    for (const port of SPAWN_PORT_CANDIDATES) {
+      const args = [
+        '--standalone',
+        '--subclient_type', 'hub',
+        '--override_ide_name', 'antigravity',
+        '--override_ide_version', OVERRIDE_IDE_VERSION, // REQUIRED: avoids version gate
+        '--override_user_agent_name', 'antigravity',
+        '--api_server_url', 'https://generativelanguage.googleapis.com',
+        '--cloud_code_endpoint', 'https://daily-cloudcode-pa.googleapis.com',
+        '--csrf_token', csrf,
+        '--https_server_port', String(port),
+        '--app_data_dir', 'antigravity',
+        '--enable_sidecars',
+      ];
+      const child = spawn(binary, args, {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        detached: false,
+        windowsHide: true,
+      });
+
+      // Buffer stderr so we can surface the real failure reason. Capped at
+      // 16KB to avoid pathological-log memory growth.
+      let stderrBuf = '';
+      const STDERR_CAP = 16 * 1024;
+      child.stderr?.on('data', (chunk: Buffer) => {
+        if (stderrBuf.length < STDERR_CAP) {
+          stderrBuf += chunk.toString('utf8').slice(0, STDERR_CAP - stderrBuf.length);
+        }
+      });
+
+      this.child = child;
+      child.on('exit', () => {
+        // If our owned server dies, drop the endpoint so the next call respawns.
+        if (this.child === child) {
+          this.child = null;
+          this.endpoint = null;
+          this.enumCache.clear();
+        }
+      });
+
+      const ep: AntigravityEndpoint = { httpsPort: port, csrf, owned: true };
+      const deadline = Date.now() + 60_000;
+      let bindFailed = false;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          // Early exit: almost always a bind error on Windows. Surface stderr
+          // so the user (and future debuggers) see the actual reason instead
+          // of a bare "exited code 1".
+          const reason = stderrBuf.trim() || `exit code ${child.exitCode}`;
+          bindErrors.push({ port, reason: reason.slice(0, 500) });
+          bindFailed = /bind|access permissions|address already in use|EADDRINUSE/i.test(stderrBuf);
+          break;
+        }
+        if (await this.isHealthy(ep)) return ep;
+        await delay(500);
       }
-      if (await this.isHealthy(ep)) return ep;
-      lastErr = 'not bound yet';
-      await delay(500);
+
+      if (!bindFailed && child.exitCode === null) {
+        // Timeout without an early exit -- the server is hung, not bind-blocked.
+        // Stop and surface the timeout; don't try the next port (a hung server
+        // suggests something else is wrong).
+        this.stop();
+        throw new Error(
+          `Antigravity language server did not become healthy on port ${port} within 60s`,
+        );
+      }
+      // Otherwise: bind failure or early exit. Try the next candidate.
     }
+
     this.stop();
-    throw new Error(`Antigravity server did not bind within 60s (${String(lastErr)})`);
+    const tried = bindErrors.map((e) => `${e.port}: ${e.reason.split('\n')[0]}`).join('; ');
+    throw new Error(
+      `Antigravity server exited early on all candidate ports. Tried: ${tried}`,
+    );
   }
 
   // ---- helpers -----------------------------------------------------------
