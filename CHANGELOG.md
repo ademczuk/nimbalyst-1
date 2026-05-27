@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-<!-- New features go here -->
+- Marketplace: Kimi Code extension surfaces Moonshot Kimi K2.6 in chat and agent providers, with meta-agent host support so a Kimi agent can spawn Claude or Codex child sessions mid-loop. Requires a Moonshot API key entered in the settings panel; never sourced from environment variables. (#TBD) Thanks @ademczuk.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
