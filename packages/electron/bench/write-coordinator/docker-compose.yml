@@ -1,3 +1,11 @@
+# Spins up the postgres comparison backend. The bench itself runs natively
+# (node bench.mjs) so better-sqlite3 compiles for the host platform.
+#
+#   docker compose up -d        # start postgres
+#   npm install
+#   node bench.mjs              # run on host
+#   docker compose down         # tear down postgres when done
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -11,16 +19,3 @@ services:
       interval: 2s
       timeout: 2s
       retries: 20
-
-  bench:
-    build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PG_URL: postgres://postgres:bench@postgres:5432/nimbalyst_bench
-      BENCH_DURATION_MS: "20000"
-      PG_POOL_MAX: "20"
-    volumes:
-      - ./results:/app/results
-    command: ["node", "bench.mjs"]

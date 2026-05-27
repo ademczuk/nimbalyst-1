@@ -8,18 +8,44 @@ The bench impl in `write-coordinator-bench-impl.mjs` is a plain-JS sibling of th
 
 ## Running
 
+The bench runs natively on the host. Only Postgres goes in docker so the bs3+coord vs PG comparison is fair.
+
 ```bash
-# 1. Postgres backend (used as upper-bound reference)
+# 1. Start the Postgres comparison backend
 docker compose up -d postgres
-# 2. Install deps
+
+# 2. Install deps (compiles better-sqlite3 native module for your host arch)
 npm install
-# 3. Run
+
+# 3. Run the bench
 node --no-warnings bench.mjs
+
+# 4. Tear down
+docker compose down
 ```
 
-Output: `results.json` (raw) and `results.md` (table).
+Output: `results.json` (raw) and `results.md` (rendered table).
 
-Knobs via env vars: `PHASE_MS` (default 5000), `PG_URL`.
+Knobs via env vars: `PHASE_MS` (default 5000), `PG_URL` (default `postgres://postgres:bench@127.0.0.1:15555/nimbalyst_bench`).
+
+### Per-platform notes
+
+**macOS (arm64 or x64):**
+- Requires Xcode Command Line Tools for the `better-sqlite3` native compile. If `npm install` fails with `gyp ERR! ...`, run `xcode-select --install` once and retry.
+- Docker Desktop required for the Postgres backend. Apple Silicon: confirmed working with `postgres:16-alpine` (multi-arch image).
+
+**Linux (glibc):**
+- Needs `python3`, `make`, `g++` for the native compile if a prebuilt binary is not available. On Debian/Ubuntu: `apt-get install python3 make g++`.
+
+**Windows:**
+- Needs Visual Studio Build Tools or `windows-build-tools` for native compile fallback. Most recent Node distributions on Windows ship prebuilds so npm install usually does not need to compile.
+
+### Troubleshooting
+
+- `EADDRINUSE: 15555` - another process holds the port. Either stop it or remap in `docker-compose.yml`.
+- `Cannot find module 'better-sqlite3'` after `npm install` - the native module didn't compile. See platform notes above. As a quick sanity check: `node -e "require('better-sqlite3')(':memory:')"`.
+- PG seed phase takes 13s - that's the first-run insert latency over the docker network. Expected. Subsequent phases are fast.
+- bs3 phases are sub-second per phase; the whole bench takes about 60-90s end to end (Postgres seed dominates).
 
 ## What it measures
 
