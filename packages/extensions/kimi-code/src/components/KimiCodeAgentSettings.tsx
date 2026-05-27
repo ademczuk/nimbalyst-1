@@ -36,7 +36,7 @@ export interface KimiCodeAgentSettingsProps {
 }
 
 /** Shared with the chat panel. See KimiCodeSettings for rationale. */
-const API_KEY_SLOT = 'kimi-code';
+const API_KEY_SLOT = 'moonshot';
 
 export function KimiCodeAgentSettings({
   config,

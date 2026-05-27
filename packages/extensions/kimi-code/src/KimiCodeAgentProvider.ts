@@ -45,10 +45,10 @@ export const KIMI_CODE_AGENT_DEFAULT_MODEL = 'kimi-k2.6';
  * Model ids this agent provider surfaces by default. Mirrors the chat
  * provider's set so the dropdown shows the same options in agent sessions.
  */
+/** Active Moonshot K2-family models. See KimiCodeProvider for deprecations. */
 const SURFACED_MODEL_IDS = new Set<string>([
   'kimi-k2.6',
   'kimi-k2.5',
-  'kimi-k2-thinking',
 ]);
 
 interface KimiCodeAgentConfig {
@@ -294,7 +294,7 @@ export class KimiCodeAgentProvider {
       if (!SURFACED_MODEL_IDS.has(info.id) && !info.id.startsWith('kimi-k2')) continue;
       out.push(toAIModel(info));
     }
-    const order = ['kimi-k2.6', 'kimi-k2-thinking', 'kimi-k2.5'];
+    const order = ['kimi-k2.6', 'kimi-k2.5'];
     out.sort((a, b) => {
       const ai = order.indexOf(stripPrefix(a.id));
       const bi = order.indexOf(stripPrefix(b.id));
@@ -328,7 +328,6 @@ function prettyName(id: string): string {
   switch (id) {
     case 'kimi-k2.6': return 'Kimi K2.6';
     case 'kimi-k2.5': return 'Kimi K2.5';
-    case 'kimi-k2-thinking': return 'Kimi K2 Thinking';
     default: return id;
   }
 }
@@ -337,7 +336,6 @@ function contextWindowFor(id: string): number | undefined {
   switch (id) {
     case 'kimi-k2.6': return 256_000;
     case 'kimi-k2.5': return 128_000;
-    case 'kimi-k2-thinking': return 128_000;
     default: return undefined;
   }
 }

@@ -44,12 +44,12 @@ export interface KimiCodeSettingsProps {
 
 /**
  * Both kimi-code providers persist the Moonshot API key in ONE shared slot.
- * Naming aligns with the provider id of the chat variant so the slot is
- * findable via the existing aiSettings.apiKeys[provider] lookup pattern in
- * AIService.ts. Main resolves this slot for both kimi-code:* and
- * kimi-code-agent:* request handlers.
+ * Slot is named at the VENDOR level ("moonshot") rather than by provider id
+ * because the secret it holds is a Moonshot account credential - one
+ * account funds both the chat and agent providers. Main reads the same
+ * slot in KimiCodeClient.getMoonshotApiKey().
  */
-const API_KEY_SLOT = 'kimi-code';
+const API_KEY_SLOT = 'moonshot';
 
 export function KimiCodeSettings({
   config,

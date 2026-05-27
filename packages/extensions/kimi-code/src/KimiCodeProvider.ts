@@ -32,10 +32,15 @@ export const KIMI_CODE_DEFAULT_MODEL = 'kimi-k2.6';
  * This static set is the fallback when the catalog probe fails (e.g. no API
  * key entered yet) so the picker isn't empty.
  */
+/**
+ * Per the Moonshot model list page, only `kimi-k2.6` and `kimi-k2.5` are
+ * active as of 2026-05-27. `kimi-k2-thinking`, `kimi-k2-0905-preview`,
+ * `kimi-k2-turbo-preview` and `kimi-latest` are deprecated or discontinued
+ * - omitted from the surfaced set so users don't pick a dead model.
+ */
 const SURFACED_MODEL_IDS = new Set<string>([
   'kimi-k2.6',
   'kimi-k2.5',
-  'kimi-k2-thinking',
 ]);
 
 interface KimiCodeConfig {
@@ -208,7 +213,7 @@ export class KimiCodeProvider {
     }
 
     // Stable ordering: latest -> thinking -> compat.
-    const order = ['kimi-k2.6', 'kimi-k2-thinking', 'kimi-k2.5'];
+    const order = ['kimi-k2.6', 'kimi-k2.5'];
     out.sort((a, b) => {
       const ai = order.indexOf(stripPrefix(a.id));
       const bi = order.indexOf(stripPrefix(b.id));
@@ -242,7 +247,6 @@ function prettyName(id: string): string {
   switch (id) {
     case 'kimi-k2.6': return 'Kimi K2.6';
     case 'kimi-k2.5': return 'Kimi K2.5';
-    case 'kimi-k2-thinking': return 'Kimi K2 Thinking';
     default: return id;
   }
 }
@@ -251,7 +255,6 @@ function contextWindowFor(id: string): number | undefined {
   switch (id) {
     case 'kimi-k2.6': return 256_000;
     case 'kimi-k2.5': return 128_000;
-    case 'kimi-k2-thinking': return 128_000;
     default: return undefined;
   }
 }

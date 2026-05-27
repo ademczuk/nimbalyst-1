@@ -42,10 +42,15 @@ function getAiSettingsStore(): Store<Record<string, unknown>> {
  * Read the Moonshot API key from electron-store. NEVER falls back to env.
  * Returns null if the user hasn't entered a key yet so callers can surface
  * an actionable error instead of sending an unauthenticated request.
+ *
+ * Slot name is "moonshot" (vendor-level), not "kimi-code" (provider-level),
+ * because one Moonshot account funds both the kimi-code chat and kimi-code-
+ * agent providers. Naming by vendor avoids ambiguity if the provider id
+ * surface ever changes.
  */
 export function getMoonshotApiKey(): string | null {
   const apiKeys = (getAiSettingsStore().get('apiKeys', {}) as Record<string, string>) || {};
-  const key = apiKeys['kimi-code'];
+  const key = apiKeys['moonshot'];
   if (typeof key !== 'string' || key.trim() === '') return null;
   return key.trim();
 }
@@ -79,6 +84,15 @@ export interface MoonshotCompletionRequest {
   messages: MoonshotChatMessage[];
   model: string;
   maxTokens?: number;
+  /**
+   * NOTE: temperature is DROPPED from the outbound request body.
+   *
+   * Kimi K2.6 fixes temperature internally (1.0 in thinking mode, 0.6 in non-
+   * thinking) and returns HTTP 400 on ANY caller-supplied temperature value
+   * (verified against Moonshot's K2.6 quickstart docs). The field stays here
+   * for API parity with the rest of the codebase but is intentionally not
+   * forwarded.
+   */
   temperature?: number;
 }
 
@@ -186,7 +200,8 @@ export async function complete(req: MoonshotCompletionRequest, timeoutMs = DEFAU
     stream: false,
   };
   if (typeof req.maxTokens === 'number') payload.max_tokens = req.maxTokens;
-  if (typeof req.temperature === 'number') payload.temperature = req.temperature;
+  // temperature is intentionally NOT forwarded - see MoonshotCompletionRequest
+  // for the K2.6 internal-temperature constraint.
 
   const res = await fetchWithTimeout(
     `${MOONSHOT_API_BASE}/chat/completions`,
