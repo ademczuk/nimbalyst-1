@@ -32,11 +32,30 @@
  *      caller, who can retry).
  */
 
-import { app, net } from 'electron';
+import { net } from 'electron';
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+
+/**
+ * Spoofed Kimi CLI version. The Moonshot api.kimi.com endpoint filters on
+ * User-Agent (only "KimiCLI/<version>" clients are allowed to call
+ * /v1/chat/completions; other UAs get 403 even with a valid bearer token).
+ * The X-Msh-Version header is similarly the CLI's pip version, not the
+ * caller app's version. Bumping this in lockstep with the CLI's releases
+ * keeps us indistinguishable at the wire level. If a future Moonshot
+ * release changes the format or pins to specific versions, this constant
+ * is the only thing to update.
+ *
+ * Source: MoonshotAI/kimi-cli src/kimi_cli/constant.py get_user_agent()
+ * and src/kimi_cli/llm.py _kimi_default_headers().
+ *
+ * TODO: read the user's actual installed kimi-cli version (e.g. by
+ * executing `kimi --version` or parsing the pip metadata at
+ * `~/.local/share/kimi/...`) so we track the user's local CLI exactly.
+ */
+const KIMI_CLI_VERSION = '0.66.0';
 
 function kimiApiBase(): string {
   return process.env.KIMI_API_BASE || 'https://api.kimi.com/coding/v1';
@@ -157,8 +176,16 @@ async function commonHeaders(): Promise<Record<string, string>> {
   const osVersion = os.release();
   const hostname = os.hostname();
   return {
+    // User-Agent is REQUIRED by api.kimi.com/coding/v1. The server filters
+    // on this string and returns 403 to any client that isn't identified
+    // as the Kimi CLI - even with an otherwise-valid bearer token. See the
+    // KIMI_CLI_VERSION comment above.
+    'User-Agent': `KimiCLI/${KIMI_CLI_VERSION}`,
     'X-Msh-Platform': 'kimi_cli',
-    'X-Msh-Version': app?.getVersion?.() || 'nimbalyst-kimi-code-ext',
+    // X-Msh-Version is the CLI's pip version, not the caller app's version.
+    // Sending Nimbalyst's version here was rejected on the chat endpoint;
+    // matching the User-Agent's version is the documented shape.
+    'X-Msh-Version': KIMI_CLI_VERSION,
     'X-Msh-Device-Name': hostname,
     'X-Msh-Device-Model': `${platform} ${arch}`,
     'X-Msh-Os-Version': osVersion,

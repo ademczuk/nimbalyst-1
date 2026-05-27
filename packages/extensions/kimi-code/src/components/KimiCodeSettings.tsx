@@ -119,7 +119,11 @@ export function KimiCodeSettings({
   }, []);
 
   const isLoggedIn = authStatus?.state === 'valid';
-  const canTest = !loading && config.testStatus !== 'testing' && (authStatus?.state ?? 'not-logged-in') !== 'not-logged-in';
+  // Enable the button as long as we are not actively loading or testing.
+  // The test itself is the source of truth - gating on a derived "is logged
+  // in" state was creating a race where the OAuth card had rendered but the
+  // 15s probe hadn't returned yet, leaving the button perpetually disabled.
+  const canTest = !loading && config.testStatus !== 'testing';
 
   return (
     <div className="provider-panel kimi-code-panel flex flex-col" data-testid="kimi-code-settings">

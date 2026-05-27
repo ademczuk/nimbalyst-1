@@ -108,7 +108,10 @@ export function KimiCodeAgentSettings({
   }, []);
 
   const isLoggedIn = authStatus?.state === 'valid';
-  const canTest = !loading && config.testStatus !== 'testing' && (authStatus?.state ?? 'not-logged-in') !== 'not-logged-in';
+  // See KimiCodeSettings - the gate intentionally does NOT depend on the
+  // auth status. The probe is racey on first render, the test is cheap, and
+  // a clear server response is more useful than a guess.
+  const canTest = !loading && config.testStatus !== 'testing';
 
   return (
     <div className="provider-panel kimi-code-agent-panel flex flex-col" data-testid="kimi-code-agent-settings">
