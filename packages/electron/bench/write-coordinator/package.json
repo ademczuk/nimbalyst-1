@@ -1,0 +1,20 @@
+{
+  "name": "@nimbalyst/write-coordinator-bench",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "description": "HOL benchmark harness for the WriteCoordinator proposal. Compares better-sqlite3+WAL (direct), better-sqlite3+WAL+Coordinator, and Postgres on baseline writes / writes-during-slow-op / reads-during-slow-op / multi-writer burst.",
+  "scripts": {
+    "bench": "node bench.mjs",
+    "pg:up": "docker compose up -d postgres",
+    "pg:down": "docker compose down"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.16",
+    "better-sqlite3": "^12.10.0",
+    "pg": "^8.13.1"
+  }
+}
