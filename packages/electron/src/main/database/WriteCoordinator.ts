@@ -222,6 +222,26 @@ export class WriteCoordinator {
     };
   }
 
+  /**
+   * Force a WAL checkpoint. Call periodically (e.g. after large bg ops) to
+   * keep the WAL file bounded. Long-lived readers can prevent automatic
+   * checkpointing under `wal_autocheckpoint`, so an explicit call is the
+   * standard mitigation for the WAL-bloat failure mode documented at
+   * sqlite.org/wal.html (the "checkpoint starvation" section).
+   *
+   * Mode: 'PASSIVE' (default, no blocking), 'FULL' (waits for writers),
+   * 'RESTART' (FULL + restarts the WAL after), 'TRUNCATE' (RESTART + truncates).
+   * Use TRUNCATE after a known-large bg op to reclaim disk.
+   */
+  checkpoint(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'PASSIVE'): {
+    busy: number; log: number; checkpointed: number;
+  } {
+    const row = this.db.pragma(`wal_checkpoint(${mode})`, { simple: false }) as Array<{
+      busy: number; log: number; checkpointed: number;
+    }>;
+    return row[0] ?? { busy: -1, log: -1, checkpointed: -1 };
+  }
+
   // ----- internal -----
 
   private prepareCached(sql: string): Database.Statement {
@@ -270,7 +290,7 @@ export class WriteCoordinator {
 
     const stmtCount = batch.reduce((a, b) => a + b.stmts.length, 0);
     const t0 = performance.now();
-    try {
+    const runBatch = () => {
       const tx = this.db.transaction(() => {
         for (const item of batch) {
           for (const s of item.stmts) {
@@ -279,6 +299,26 @@ export class WriteCoordinator {
         }
       });
       tx();
+    };
+    try {
+      // Retry on SQLITE_BUSY / SQLITE_LOCKED with small backoff. better-sqlite3's
+      // built-in busy_timeout handles short waits; this is a belt-and-braces
+      // retry for the rare case where the timeout itself elapses (long-lived
+      // reader holding a snapshot, etc.).
+      let attempt = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try { runBatch(); break; }
+        catch (err) {
+          const code = (err as { code?: string }).code;
+          if ((code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') && attempt < 3) {
+            attempt++;
+            await new Promise<void>((r) => setTimeout(r, 5 * Math.pow(2, attempt))); // 10, 20, 40 ms
+            continue;
+          }
+          throw err;
+        }
+      }
       const dt = performance.now() - t0;
       if (stmtCount > 0) this.emaHot = (1 - this.emaAlpha) * this.emaHot + this.emaAlpha * (dt / stmtCount);
       for (const item of batch) item.resolve({ writeId: item.writeId, ok: true });
