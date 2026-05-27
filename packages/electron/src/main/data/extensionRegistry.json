@@ -47,7 +47,7 @@
     {
       "id": "kimi-code",
       "name": "Kimi Code",
-      "description": "Moonshot AI Kimi K2.6 via the platform.moonshot.ai OpenAI-compatible API. Contributes both chat and agent providers. Requires a Moonshot API key entered in the settings panel; never sourced from environment variables.",
+      "description": "Moonshot Kimi via the Kimi Code CLI login. Two providers (chat and agent) ride the OAuth credentials the Kimi Code CLI writes after /login; no API key entered in Nimbalyst.",
       "version": "1.0.0",
       "author": "Nimbalyst",
       "categories": [
@@ -70,17 +70,17 @@
       ],
       "minimumAppVersion": "1.0.0",
       "downloadUrl": "bundled:kimi-code.nimext",
-      "checksum": "fc55661c7883432cd54a0c57934bcd6e831e7ada658de699f321b1d4d0706434",
+      "checksum": "6963ac2e7aee7269f83cfae92504f8bcfaa7a59c1c43822e384de22b4ab9ae91",
       "repositoryUrl": "",
       "changelog": "Initial release as marketplace extension.",
-      "tagline": "Moonshot Kimi K2.6 in chat and agent providers",
-      "longDescription": "Adds two providers to Nimbalyst that talk to Moonshot's Kimi K2.6 model through the OpenAI-compatible platform.moonshot.ai API. A chat provider for one-shot prompts and an agent provider with tool-loop support and meta-agent host mode (Kimi K2.6 can spawn Claude or Codex child sessions mid-loop). Requires a Moonshot API key, entered once in the settings panel and stored in the local electron-store; no environment-variable fallback. Default model is kimi-k2.6 (256K context); kimi-k2-thinking and kimi-k2.5 are also surfaced for reasoning and compatibility workflows.",
+      "tagline": "Moonshot Kimi via the Kimi Code CLI login",
+      "longDescription": "Two providers (chat and agent) that ride your existing Kimi Code CLI authentication. Run /login in the Kimi Code CLI once and Nimbalyst picks up the OAuth credentials from ~/.kimi/credentials/kimi-code.json automatically; no API key entered in Nimbalyst. The chat provider sends one-shot prompts, the agent provider runs a tool-loop with meta-agent host support (a Kimi agent session can spawn Claude or Codex child sessions mid-loop). Default model is kimi-for-coding (Kimi, 256K context) at api.kimi.com/coding/v1. Token refresh is handled in-process via the same auth.kimi.com endpoint the CLI uses.",
       "highlights": [
-        "Moonshot Kimi K2.6 chat provider with 256K context window",
+        "Auth rides your existing Kimi Code CLI /login - no API key entered in Nimbalyst",
+        "Kimi chat provider with 256K context window",
         "Agent provider with tool-loop and meta-agent host mode",
         "Spawn Claude or Codex child sessions from a Kimi agent loop",
-        "API key entered once in the settings panel - no env fallback, no key leakage",
-        "OpenAI-compatible request shape; works against api.moonshot.ai/v1"
+        "Background token refresh against auth.kimi.com (same flow the CLI uses)"
       ],
       "local": true
     },

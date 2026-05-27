@@ -2,7 +2,7 @@
  * Kimi Code extension - standalone marketplace package.
  *
  * Contributes TWO AI providers:
- *   - kimi-code        (chat, default model = Kimi K2.6)
+ *   - kimi-code        (chat, default model = Kimi)
  *   - kimi-code-agent  (agent, tool-loop + meta-agent host)
  *
  * Both providers talk to Moonshot's OpenAI-compatible platform.moonshot.ai

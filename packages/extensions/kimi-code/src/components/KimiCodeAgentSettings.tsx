@@ -115,10 +115,10 @@ export function KimiCodeAgentSettings({
       <div className="kimi-code-main-column flex-1 flex flex-col">
         <div className="provider-panel-header mb-4 pb-4 border-b border-[var(--nim-border)]">
           <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-2 text-[var(--nim-text)]">
-            Kimi K2.6 (Agent)
+            Kimi (Agent)
           </h3>
           <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-            Runs a Nimbalyst-orchestrated tool loop over Kimi K2.6 using the
+            Runs a Nimbalyst-orchestrated tool loop over Kimi using the
             Kimi Code endpoint. Supports meta-agent host mode: a Kimi agent
             session can spawn Claude or Codex child sessions mid-loop. Auth
             rides the same Kimi Code CLI login as the chat provider.
@@ -226,7 +226,7 @@ export function KimiCodeAgentSettings({
 
         <div className="provider-panel-section py-3 mb-4 border-b border-[var(--nim-border)] flex items-center justify-between">
           <label htmlFor="kc-agent-enable" className="text-sm font-medium text-[var(--nim-text)]">
-            Enable Kimi K2.6 (Agent)
+            Enable Kimi (Agent)
           </label>
           <input
             id="kc-agent-enable"
@@ -294,7 +294,7 @@ export function KimiCodeAgentSettings({
 
             <div className="provider-panel-section py-3">
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Default model is <strong>kimi-for-coding</strong> (Kimi K2.6, 256K context).
+                Default model is <strong>kimi-for-coding</strong> (Kimi, 256K context).
                 Meta-agent mode activates when a session has agentRole = meta-agent;
                 the Kimi agent can then spawn Claude or Codex child sessions.
               </p>

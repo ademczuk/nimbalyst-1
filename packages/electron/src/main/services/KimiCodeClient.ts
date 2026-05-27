@@ -3,8 +3,8 @@
  *
  * Talks to the Kimi Code endpoint at api.kimi.com/coding/v1 using the OAuth
  * access token the user's Kimi Code CLI wrote to disk after `/login`. The
- * platform model is `kimi-for-coding` (which serves Kimi K2.6 under the hood;
- * the CLI displays it as "Kimi-k2.6"). This client reuses the credential file
+ * platform model is `kimi-for-coding` (which serves Kimi under the hood;
+ * the CLI displays it as "Kimi"). This client reuses the credential file
  * the CLI manages and refreshes the token itself when the access_token gets
  * close to expiry.
  *
@@ -366,7 +366,7 @@ export interface KimiModelInfo {
 }
 
 const KNOWN_MODEL_META: Record<string, { displayName: string; contextWindow: number }> = {
-  'kimi-for-coding': { displayName: 'Kimi K2.6 (Kimi Code)', contextWindow: 262_144 },
+  'kimi-for-coding': { displayName: 'Kimi (Kimi Code)', contextWindow: 262_144 },
 };
 
 function annotate(id: string): { displayName: string; contextWindow?: number } {
@@ -436,7 +436,7 @@ export async function getAvailableModels(): Promise<KimiModelInfo[]> {
 }
 
 export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
-  // NOTE: deliberately no `temperature` field - the Kimi K2.6 model fixes
+  // NOTE: deliberately no `temperature` field - the Kimi model fixes
   // temperature internally and returns 400 on any caller-supplied value.
   // Same constraint applies to api.kimi.com/coding/v1 as to api.moonshot.ai/v1.
   const payload: Record<string, unknown> = {

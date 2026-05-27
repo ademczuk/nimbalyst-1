@@ -4,7 +4,7 @@
  * Stateful multi-turn conversation manager for the kimi-code-agent provider.
  * Mirrors packages/extensions/gemini-antigravity/src/AntigravityToolLoopProtocol.ts.
  *
- * Although Moonshot Kimi K2.6 natively supports OpenAI-style `tools` /
+ * Although Moonshot Kimi natively supports OpenAI-style `tools` /
  * `tool_choice` in /v1/chat/completions, this protocol uses the same
  * prompt-injection approach gemini's antigravity provider uses (tools are
  * injected as a structured block in the system prompt, model is instructed to

@@ -1,7 +1,7 @@
 /**
  * KimiCodeAgentProvider (extension-side, renderer-safe).
  *
- * AGENT provider that surfaces Moonshot Kimi K2.6 with tool-calling and
+ * AGENT provider that surfaces Moonshot Kimi with tool-calling and
  * meta-agent host support. Mirrors packages/extensions/gemini-antigravity/
  * src/AntigravityAgentProvider.ts.
  *
@@ -316,7 +316,7 @@ function toAIModel(info: KimiCodeModelInfo): {
 
 function prettyName(id: string): string {
   switch (id) {
-    case 'kimi-for-coding': return 'Kimi K2.6 (Kimi Code)';
+    case 'kimi-for-coding': return 'Kimi (Kimi Code)';
     default: return id;
   }
 }

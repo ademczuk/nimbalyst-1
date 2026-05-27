@@ -1,7 +1,7 @@
 /**
  * KimiCodeProvider (extension-side, renderer-safe).
  *
- * CHAT provider that surfaces Moonshot Kimi K2.6 via the OpenAI-compatible
+ * CHAT provider that surfaces Moonshot Kimi via the OpenAI-compatible
  * platform.moonshot.ai API. A single prompt + attached document context yields
  * a single text response chunk + complete. The Moonshot HTTP client + API key
  * resolution live in the main process behind the `kimi-code:*` IPC bridge
@@ -26,7 +26,7 @@ const PROVIDER_ID = 'kimi-code';
 /**
  * Default model id at api.kimi.com/coding/v1. Per the Kimi Code CLI's
  * config.toml schema, the platform exposes a single coding-tuned variant
- * named `kimi-for-coding` (display name "Kimi-k2.6"). This is distinct from
+ * named `kimi-for-coding` (display name "Kimi"). This is distinct from
  * the platform.moonshot.ai catalog (`kimi-k2.6`, `kimi-k2.5`, etc.) which
  * lives at a different endpoint with a different auth flow.
  */
@@ -235,7 +235,7 @@ function toAIModel(info: KimiCodeModelInfo): {
 
 function prettyName(id: string): string {
   switch (id) {
-    case 'kimi-for-coding': return 'Kimi K2.6 (Kimi Code)';
+    case 'kimi-for-coding': return 'Kimi (Kimi Code)';
     default: return id;
   }
 }

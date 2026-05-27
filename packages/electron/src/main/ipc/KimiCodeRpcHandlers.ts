@@ -17,7 +17,7 @@
  * Meta-agent host: when the caller's session has `agentRole === 'meta-agent'`,
  * the agent endpoints swap to the canonical buildMetaAgentSystemPrompt +
  * META_AGENT_ALLOWED_TOOLS surface, and tool calls for
- * mcp__nimbalyst-meta-agent__* dispatch through MetaAgentService. A Kimi K2.6
+ * mcp__nimbalyst-meta-agent__* dispatch through MetaAgentService. A Kimi
  * agent can therefore spawn Claude or Codex child sessions mid-loop.
  *
  * This module deliberately mirrors the shape of AntigravityRpcHandlers.ts so
@@ -327,7 +327,7 @@ export function registerKimiCodeRpcHandlers(): void {
         // matches the names we register in META_AGENT_TOOL_DESCRIPTORS.
         const promptText = buildMetaAgentSystemPrompt('claude', 'default', {
           provider: provider ?? 'kimi-code-agent',
-          model: model ?? 'kimi-k2.6',
+          model: model ?? 'kimi-for-coding',
         });
         return ok(promptText);
       }

@@ -127,10 +127,10 @@ export function KimiCodeSettings({
         {/* HEADER */}
         <div className="provider-panel-header mb-4 pb-4 border-b border-[var(--nim-border)]">
           <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-2 text-[var(--nim-text)]">
-            Kimi K2.6 (Chat)
+            Kimi (Chat)
           </h3>
           <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-            Talks to Kimi K2.6 through the Kimi Code endpoint at api.kimi.com.
+            Talks to Kimi through the Kimi Code endpoint at api.kimi.com.
             Auth rides your existing Kimi Code CLI login - no API key entered
             in Nimbalyst. If you have not yet logged in, open the Kimi Code
             CLI and run <code className="text-xs bg-[var(--nim-code-bg)] px-1 rounded">/login</code>.
@@ -241,7 +241,7 @@ export function KimiCodeSettings({
         {/* ENABLE TOGGLE */}
         <div className="provider-panel-section py-3 mb-4 border-b border-[var(--nim-border)] flex items-center justify-between">
           <label htmlFor="kc-enable" className="text-sm font-medium text-[var(--nim-text)]">
-            Enable Kimi K2.6 (Chat)
+            Enable Kimi (Chat)
           </label>
           <input
             id="kc-enable"
@@ -309,7 +309,7 @@ export function KimiCodeSettings({
 
             <div className="provider-panel-section py-3">
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Default model is <strong>kimi-for-coding</strong> (Kimi K2.6, 256K context). Endpoint: <code className="text-xs bg-[var(--nim-code-bg)] px-1 rounded">api.kimi.com/coding/v1</code>.
+                Default model is <strong>kimi-for-coding</strong> (Kimi, 256K context). Endpoint: <code className="text-xs bg-[var(--nim-code-bg)] px-1 rounded">api.kimi.com/coding/v1</code>.
               </p>
             </div>
           </>
