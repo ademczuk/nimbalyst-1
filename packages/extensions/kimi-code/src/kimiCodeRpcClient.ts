@@ -48,6 +48,12 @@ export interface KimiCodeChatMessage {
   name?: string;
   /** Present on assistant messages that issued tool calls. */
   tool_calls?: KimiCodeToolCall[];
+  /**
+   * K2.6-specific. Required on assistant turns that included reasoning
+   * when thinking mode is enabled. The server returns HTTP 400 if a
+   * subsequent request omits this on prior assistant turns.
+   */
+  reasoning_content?: string;
 }
 
 /** OpenAI-style tool call carried on an assistant message. */
@@ -92,6 +98,11 @@ export interface KimiCompletionReply {
   content: string | null;
   /** Tool calls the model wants the host to execute. */
   toolCalls: KimiCodeToolCall[];
+  /**
+   * K2.6-specific thinking text. Null when thinking is off. Must be echoed
+   * back on the assistant turn in subsequent requests or the server 400s.
+   */
+  reasoningContent: string | null;
   /** OpenAI finish_reason: 'stop' | 'tool_calls' | 'length' | ... */
   finishReason: string;
 }

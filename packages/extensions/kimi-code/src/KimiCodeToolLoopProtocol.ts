@@ -58,6 +58,13 @@ interface ProtocolMessage {
   content?: string;
   /** Tool calls the assistant issued on this turn. */
   toolCalls?: KimiCodeToolCall[];
+  /**
+   * K2.6 thinking-mode reasoning text from the assistant turn. Must be
+   * echoed back on the same assistant message in subsequent requests or
+   * the server returns 400 "thinking is enabled but reasoning_content is
+   * missing in assistant tool call message at index N".
+   */
+  reasoningContent?: string;
   /** Tool name; convenience field on 'tool' role. */
   toolName?: string;
   /** Required on 'tool' role; ties the result to an assistant tool_call. */
@@ -162,13 +169,18 @@ export class KimiCodeToolLoopProtocol {
 
       const text = reply.content?.trim() ?? '';
       const toolCalls = reply.toolCalls ?? [];
+      const reasoningContent = reply.reasoningContent ?? undefined;
 
       // Persist the assistant turn. content is omitted when empty alongside
       // tool_calls per the API quirk (buildMessages enforces the omission).
+      // reasoningContent MUST be persisted when thinking mode is on - the
+      // server 400s on the next turn if the assistant message at index N
+      // omits a reasoning_content the model originally produced.
       this.history.push({
         role: 'assistant',
         content: text.length > 0 ? text : undefined,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        reasoningContent,
       });
 
       if (text.length > 0) {
@@ -251,6 +263,9 @@ export class KimiCodeToolLoopProtocol {
         }
         if (msg.toolCalls && msg.toolCalls.length > 0) {
           entry.tool_calls = msg.toolCalls;
+        }
+        if (typeof msg.reasoningContent === 'string' && msg.reasoningContent.length > 0) {
+          entry.reasoning_content = msg.reasoningContent;
         }
         out.push(entry);
       } else if (msg.role === 'tool') {

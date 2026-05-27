@@ -390,6 +390,17 @@ export interface KimiChatMessage {
   name?: string;
   /** Present on assistant messages that issued tool calls. */
   tool_calls?: KimiToolCall[];
+  /**
+   * K2.6-specific. When `default_thinking = true` is configured for the
+   * kimi-for-coding model (the Kimi CLI default), the model returns
+   * `reasoning_content` on assistant turns alongside content/tool_calls.
+   * Subsequent requests MUST echo this field back on the same assistant
+   * message or the server returns HTTP 400 "thinking is enabled but
+   * reasoning_content is missing in assistant tool call message at index N".
+   * Preserving it is the kimi-cli source's documented contract (kimi.py
+   * convert_message and convert_non_stream_response).
+   */
+  reasoning_content?: string;
 }
 
 /** OpenAI-style tool call carried on an assistant message. */
@@ -429,6 +440,14 @@ export interface KimiCompletionReply {
   content: string | null;
   /** Tool calls the model wants the host to execute. */
   toolCalls: KimiToolCall[];
+  /**
+   * K2.6-specific reasoning text from the model's thinking mode. Null when
+   * thinking is off or the response had no reasoning. Callers must store
+   * and echo this back on subsequent requests as `reasoning_content` on
+   * the same assistant message - see KimiChatMessage.reasoning_content
+   * for the rationale.
+   */
+  reasoningContent: string | null;
   /** OpenAI finish_reason: 'stop' | 'tool_calls' | 'length' | ... */
   finishReason: string;
 }
@@ -550,6 +569,7 @@ export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_T
       message?: {
         content?: string | null;
         tool_calls?: KimiToolCall[];
+        reasoning_content?: string | null;
       };
       finish_reason?: string;
     }>;
@@ -562,6 +582,7 @@ export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_T
   return {
     content: typeof message.content === 'string' ? message.content : null,
     toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
+    reasoningContent: typeof message.reasoning_content === 'string' ? message.reasoning_content : null,
     finishReason: choice.finish_reason ?? 'stop',
   };
 }

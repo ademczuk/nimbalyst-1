@@ -70,7 +70,7 @@
       ],
       "minimumAppVersion": "1.0.0",
       "downloadUrl": "bundled:kimi-code.nimext",
-      "checksum": "617b3ee4fac7488b3fb283fc2d44a5c59fc59800a0c36e78c8c7f4a7986832ee",
+      "checksum": "7421e819856a67666f82ccefd643d9f2c6899e22670c9de50f17679d75fde650",
       "repositoryUrl": "",
       "changelog": "Initial release as marketplace extension.",
       "tagline": "Moonshot Kimi via the Kimi Code CLI login",
