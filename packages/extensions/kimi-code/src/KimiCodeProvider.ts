@@ -23,24 +23,23 @@ import { TinyEmitter } from './emitter';
 
 const PROVIDER_ID = 'kimi-code';
 
-/** Default Moonshot model id. Latest stable K2 as of 2026: kimi-k2.6 (256K context). */
-export const KIMI_CODE_DEFAULT_MODEL = 'kimi-k2.6';
+/**
+ * Default model id at api.kimi.com/coding/v1. Per the Kimi Code CLI's
+ * config.toml schema, the platform exposes a single coding-tuned variant
+ * named `kimi-for-coding` (display name "Kimi-k2.6"). This is distinct from
+ * the platform.moonshot.ai catalog (`kimi-k2.6`, `kimi-k2.5`, etc.) which
+ * lives at a different endpoint with a different auth flow.
+ */
+export const KIMI_CODE_DEFAULT_MODEL = 'kimi-for-coding';
 
 /**
  * Model ids this provider surfaces by default. The host's getModels() pass
- * lands the live catalog from GET /v1/models, scoped to the K2 family in main.
- * This static set is the fallback when the catalog probe fails (e.g. no API
- * key entered yet) so the picker isn't empty.
- */
-/**
- * Per the Moonshot model list page, only `kimi-k2.6` and `kimi-k2.5` are
- * active as of 2026-05-27. `kimi-k2-thinking`, `kimi-k2-0905-preview`,
- * `kimi-k2-turbo-preview` and `kimi-latest` are deprecated or discontinued
- * - omitted from the surfaced set so users don't pick a dead model.
+ * lands the live catalog from GET /v1/models when the user is logged in.
+ * The static set is the fallback for when the CLI is not logged in yet so
+ * the picker still shows something meaningful.
  */
 const SURFACED_MODEL_IDS = new Set<string>([
-  'kimi-k2.6',
-  'kimi-k2.5',
+  'kimi-for-coding',
 ]);
 
 interface KimiCodeConfig {
@@ -206,19 +205,14 @@ export class KimiCodeProvider {
 
     const out: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }> = [];
     for (const info of catalog) {
-      // Only surface K2 family ids the picker knows about. Anything else
-      // (e.g. moonshot-v1-* legacy ids) is hidden.
-      if (!SURFACED_MODEL_IDS.has(info.id) && !info.id.startsWith('kimi-k2')) continue;
+      // Only surface Kimi Code-platform ids. The CLI may add more later;
+      // we accept any id that starts with "kimi-" so future variants don't
+      // need a code change.
+      if (!SURFACED_MODEL_IDS.has(info.id) && !info.id.startsWith('kimi-')) continue;
       out.push(toAIModel(info));
     }
 
-    // Stable ordering: latest -> thinking -> compat.
-    const order = ['kimi-k2.6', 'kimi-k2.5'];
-    out.sort((a, b) => {
-      const ai = order.indexOf(stripPrefix(a.id));
-      const bi = order.indexOf(stripPrefix(b.id));
-      return (ai === -1 ? order.length : ai) - (bi === -1 ? order.length : bi);
-    });
+    // Only one Kimi Code-platform model today. Sort is a no-op when length<=1.
     return out;
   }
 }
@@ -239,22 +233,16 @@ function toAIModel(info: KimiCodeModelInfo): {
   };
 }
 
-function stripPrefix(id: string): string {
-  return id.includes(':') ? id.split(':').slice(1).join(':') : id;
-}
-
 function prettyName(id: string): string {
   switch (id) {
-    case 'kimi-k2.6': return 'Kimi K2.6';
-    case 'kimi-k2.5': return 'Kimi K2.5';
+    case 'kimi-for-coding': return 'Kimi K2.6 (Kimi Code)';
     default: return id;
   }
 }
 
 function contextWindowFor(id: string): number | undefined {
   switch (id) {
-    case 'kimi-k2.6': return 256_000;
-    case 'kimi-k2.5': return 128_000;
+    case 'kimi-for-coding': return 262_144;
     default: return undefined;
   }
 }

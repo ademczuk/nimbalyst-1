@@ -1,13 +1,13 @@
 /**
  * Settings panel for the Kimi Code AGENT provider.
  *
- * Mirrors KimiCodeSettings (chat panel) and gemini's AntigravityAgentSettings.
- * The Moonshot API key field writes to the same `kimi-code` slot the chat
- * panel uses - one key, two providers.
+ * Mirrors KimiCodeSettings - both providers share the same Kimi Code CLI
+ * OAuth login. The agent variant adds meta-agent host language.
  */
 
 import React from 'react';
 import { KimiCodeAgentProvider } from '../KimiCodeAgentProvider';
+import { KimiCodeRpcClient, type KimiCodeAuthStatus } from '../kimiCodeRpcClient';
 
 interface Model {
   id: string;
@@ -35,16 +35,19 @@ export interface KimiCodeAgentSettingsProps {
   onConfigChange?: (updates: Partial<ProviderConfig>) => void;
 }
 
-/** Shared with the chat panel. See KimiCodeSettings for rationale. */
-const API_KEY_SLOT = 'moonshot';
+function formatRemaining(expiresAt: number): string {
+  const remaining = expiresAt - Date.now() / 1000;
+  if (remaining <= 0) return 'expired';
+  if (remaining < 60) return `${Math.floor(remaining)}s`;
+  if (remaining < 3600) return `${Math.floor(remaining / 60)} min`;
+  return `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m`;
+}
 
 export function KimiCodeAgentSettings({
   config,
-  apiKeys,
   availableModels,
   loading,
   onToggle,
-  onApiKeyChange,
   onModelToggle,
   onSelectAllModels,
   onTestConnection,
@@ -53,10 +56,34 @@ export function KimiCodeAgentSettings({
   const allSelected = availableModels.length > 0
     && availableModels.every((m) => enabledModelIds.includes(m.id));
 
-  const currentApiKey = apiKeys?.[API_KEY_SLOT] ?? '';
-  const hasApiKey = currentApiKey.length > 0;
-
+  const [authStatus, setAuthStatus] = React.useState<KimiCodeAuthStatus | null>(null);
+  const [authProbing, setAuthProbing] = React.useState<boolean>(true);
   const [modelsError, setModelsError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const probe = () => {
+      KimiCodeRpcClient.authStatus()
+        .then((s) => {
+          if (!cancelled) {
+            setAuthStatus(s);
+            setAuthProbing(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAuthStatus({ state: 'not-logged-in' });
+            setAuthProbing(false);
+          }
+        });
+    };
+    probe();
+    const id = window.setInterval(probe, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   const autoSelectFiredRef = React.useRef(false);
   React.useEffect(() => {
@@ -80,6 +107,9 @@ export function KimiCodeAgentSettings({
       });
   }, []);
 
+  const isLoggedIn = authStatus?.state === 'valid';
+  const canTest = !loading && config.testStatus !== 'testing' && (authStatus?.state ?? 'not-logged-in') !== 'not-logged-in';
+
   return (
     <div className="provider-panel kimi-code-agent-panel flex flex-col" data-testid="kimi-code-agent-settings">
       <div className="kimi-code-main-column flex-1 flex flex-col">
@@ -88,40 +118,74 @@ export function KimiCodeAgentSettings({
             Kimi K2.6 (Agent)
           </h3>
           <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-            Agent provider that runs a Nimbalyst-orchestrated tool loop over
-            Moonshot Kimi K2.6. Supports meta-agent mode: a Kimi agent can
-            spawn Claude or Codex child sessions mid-loop via the meta-agent
-            tool surface. Auth uses the same Moonshot API key as the chat
-            provider.
+            Runs a Nimbalyst-orchestrated tool loop over Kimi K2.6 using the
+            Kimi Code endpoint. Supports meta-agent host mode: a Kimi agent
+            session can spawn Claude or Codex child sessions mid-loop. Auth
+            rides the same Kimi Code CLI login as the chat provider.
           </p>
         </div>
 
-        {/* API KEY (shared slot with chat panel) */}
+        {/* OAUTH STATUS CARD - shared shape with the chat panel */}
         <div
           className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]"
-          data-testid="kimi-code-agent-api-key-section"
+          data-testid="kimi-code-agent-oauth-status"
         >
-          <label htmlFor="kimi-code-agent-api-key" className="block text-base font-semibold text-[var(--nim-text)] mb-2">
-            Moonshot API key
-          </label>
-          <input
-            id="kimi-code-agent-api-key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={currentApiKey}
-            onChange={(e) => onApiKeyChange?.(API_KEY_SLOT, e.target.value)}
-            placeholder="sk-..."
-            className="w-full text-sm bg-[var(--nim-bg-tertiary)] border border-[var(--nim-border)] rounded-md px-3 py-2 text-[var(--nim-text)] placeholder:text-[var(--nim-text-muted)] focus:outline-none focus:border-[var(--nim-primary)]"
-            data-testid="kimi-code-agent-api-key-input"
-          />
-          <p className="text-[12px] text-[var(--nim-text-muted)] mt-2 leading-relaxed">
-            Shared with the Kimi Code Chat provider - one key, both providers.
-          </p>
+          <h4 className="provider-panel-section-title text-base font-semibold mb-3 text-[var(--nim-text)]">
+            Kimi Code CLI authentication
+          </h4>
+
+          {authProbing && (
+            <p className="text-[13px] text-[var(--nim-text-muted)]">Checking for Kimi Code CLI credentials...</p>
+          )}
+
+          {!authProbing && authStatus?.state === 'valid' && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-[var(--nim-success-border,rgba(34,197,94,0.2))] bg-[var(--nim-success-bg,rgba(34,197,94,0.05))]">
+              <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-success)] shrink-0 animate-pulse" />
+              <div>
+                <p className="text-sm font-semibold text-[var(--nim-success-text,rgb(21,128,61))]">
+                  Connected via Kimi Code CLI
+                </p>
+                <p className="text-[13px] text-[var(--nim-text-muted)] mt-0.5">
+                  Access token valid for another <span className="font-semibold text-[var(--nim-text)]">{formatRemaining(authStatus.expiresAt)}</span>; refreshed in the background.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!authProbing && authStatus?.state === 'expired' && (
+            <div className="flex flex-col gap-2 p-3 rounded-lg border border-[var(--nim-warning-border,rgba(234,179,8,0.2))] bg-[var(--nim-warning-bg,rgba(234,179,8,0.05))]">
+              <div className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-warning)] shrink-0" />
+                <p className="text-sm font-semibold text-[var(--nim-warning-text,rgb(161,98,7))]">
+                  Kimi Code session expired
+                </p>
+              </div>
+              <p className="text-[13px] text-[var(--nim-text-muted)] leading-relaxed">
+                The extension will try to refresh automatically. If that fails, open the Kimi Code CLI and run:
+              </p>
+              <code className="block text-[13px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-3 py-2 rounded select-text">
+                /login
+              </code>
+            </div>
+          )}
+
+          {!authProbing && authStatus?.state === 'not-logged-in' && (
+            <div className="flex flex-col gap-2 p-3 rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-surface-2,rgba(0,0,0,0.02))]">
+              <div className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-text-muted)] shrink-0" />
+                <p className="text-sm font-semibold text-[var(--nim-text)]">
+                  Kimi Code CLI not logged in
+                </p>
+              </div>
+              <p className="text-[13px] text-[var(--nim-text-muted)] leading-relaxed">
+                Open the Kimi Code CLI and run <code className="text-xs bg-[var(--nim-code-bg)] px-1 py-0.5 rounded">/login</code>. Nimbalyst picks up the credentials from <code className="text-xs bg-[var(--nim-code-bg)] px-1 py-0.5 rounded">~/.kimi/credentials/kimi-code.json</code>.
+              </p>
+            </div>
+          )}
         </div>
 
         <div
-          className="provider-panel-section kimi-code-test-row py-3 mb-4 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] px-4"
+          className="provider-panel-section py-3 mb-4 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] px-4"
           data-testid="kimi-code-agent-connection-test"
         >
           <div className="flex items-center justify-between gap-3">
@@ -130,14 +194,13 @@ export function KimiCodeAgentSettings({
                 Connection
               </h4>
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Test the Moonshot API. The agent reuses the chat provider's
-                key + endpoint.
+                Same probe as the chat provider; both share the Kimi Code CLI access token.
               </p>
             </div>
             <button
               type="button"
               onClick={() => { void onTestConnection().then(handleProbeModels); }}
-              disabled={loading || config.testStatus === 'testing' || !hasApiKey}
+              disabled={!canTest}
               className={`provider-test-button py-2 px-4 rounded-md text-sm font-medium whitespace-nowrap cursor-pointer transition-all bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)] border border-[var(--nim-border)] hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] disabled:opacity-50 disabled:cursor-not-allowed ${
                 config.testStatus === 'success' ? 'text-[var(--nim-success)] border-[var(--nim-success)]' : ''
               } ${
@@ -157,11 +220,6 @@ export function KimiCodeAgentSettings({
           {config.testMessage && config.testStatus === 'error' && (
             <div className="text-xs mt-2 text-[var(--nim-error)]">
               {config.testMessage}
-            </div>
-          )}
-          {!hasApiKey && (
-            <div className="text-xs mt-2 text-[var(--nim-text-muted)]">
-              Enter a Moonshot API key above to enable testing.
             </div>
           )}
         </div>
@@ -210,9 +268,9 @@ export function KimiCodeAgentSettings({
                   <p className="text-[13px] text-[var(--nim-text-muted)]">
                     {loading
                       ? 'Loading models...'
-                      : hasApiKey
+                      : isLoggedIn
                         ? 'No models found. Test the connection to fetch the live catalog.'
-                        : 'Enter a Moonshot API key to load the model catalog.'}
+                        : 'Log in via the Kimi Code CLI to load the model catalog.'}
                   </p>
                 </>
               ) : (
@@ -236,8 +294,8 @@ export function KimiCodeAgentSettings({
 
             <div className="provider-panel-section py-3">
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Default model is <strong>Kimi K2.6</strong> (256K context).
-                Meta-agent mode is enabled when a session has agentRole = meta-agent;
+                Default model is <strong>kimi-for-coding</strong> (Kimi K2.6, 256K context).
+                Meta-agent mode activates when a session has agentRole = meta-agent;
                 the Kimi agent can then spawn Claude or Codex child sessions.
               </p>
             </div>

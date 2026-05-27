@@ -30,13 +30,20 @@
  */
 
 export interface KimiCodeModelInfo {
-  /** Stable model id, e.g. "kimi-k2.6". Used in the provider-prefixed model id. */
+  /** Stable model id, e.g. "kimi-for-coding". Used in the provider-prefixed model id. */
   id: string;
   /** Display name shown in the model picker. */
   displayName: string;
   /** Context window in tokens, surfaced by the host as maxTokens / contextWindow. */
   contextWindow?: number;
 }
+
+/** Read-only auth-status reply from main. Mirrors the gemini-antigravity
+ *  ~/.gemini OAuth status card. */
+export type KimiCodeAuthStatus =
+  | { state: 'not-logged-in' }
+  | { state: 'expired'; expiresAt: number }
+  | { state: 'valid'; expiresAt: number; scope: string };
 
 /** OpenAI-compatible chat message. */
 export interface KimiCodeChatMessage {
@@ -93,5 +100,11 @@ export class KimiCodeRpcClient {
   /** One-shot chat completion. Returns the assistant text. */
   static async complete(opts: KimiCodeCompleteOptions): Promise<string> {
     return call<string>('kimi-code:chat:complete', opts);
+  }
+
+  /** Read-only auth status check. Touches no network; mirrors the local
+   *  credentials file. Used by the Settings panel's OAuth-status card. */
+  static async authStatus(): Promise<KimiCodeAuthStatus> {
+    return call<KimiCodeAuthStatus>('kimi-code:auth:status');
   }
 }

@@ -70,7 +70,7 @@
       ],
       "minimumAppVersion": "1.0.0",
       "downloadUrl": "bundled:kimi-code.nimext",
-      "checksum": "7acae60c66866934d1feb569f48c187795197b8873805cd254deb264cc163597",
+      "checksum": "fc55661c7883432cd54a0c57934bcd6e831e7ada658de699f321b1d4d0706434",
       "repositoryUrl": "",
       "changelog": "Initial release as marketplace extension.",
       "tagline": "Moonshot Kimi K2.6 in chat and agent providers",

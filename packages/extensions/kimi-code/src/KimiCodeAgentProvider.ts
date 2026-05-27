@@ -38,17 +38,17 @@ import { TinyEmitter } from './emitter';
 
 const PROVIDER_ID = 'kimi-code-agent';
 
-/** Default Moonshot model id for the agent variant. */
-export const KIMI_CODE_AGENT_DEFAULT_MODEL = 'kimi-k2.6';
+/**
+ * Default model id at api.kimi.com/coding/v1. See KimiCodeProvider for the
+ * rationale - the Kimi Code platform exposes a single coding-tuned variant.
+ */
+export const KIMI_CODE_AGENT_DEFAULT_MODEL = 'kimi-for-coding';
 
 /**
- * Model ids this agent provider surfaces by default. Mirrors the chat
- * provider's set so the dropdown shows the same options in agent sessions.
+ * Models the agent provider surfaces. Mirrors the chat provider.
  */
-/** Active Moonshot K2-family models. See KimiCodeProvider for deprecations. */
 const SURFACED_MODEL_IDS = new Set<string>([
-  'kimi-k2.6',
-  'kimi-k2.5',
+  'kimi-for-coding',
 ]);
 
 interface KimiCodeAgentConfig {
@@ -291,15 +291,9 @@ export class KimiCodeAgentProvider {
     }
     const out: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }> = [];
     for (const info of catalog) {
-      if (!SURFACED_MODEL_IDS.has(info.id) && !info.id.startsWith('kimi-k2')) continue;
+      if (!SURFACED_MODEL_IDS.has(info.id) && !info.id.startsWith('kimi-')) continue;
       out.push(toAIModel(info));
     }
-    const order = ['kimi-k2.6', 'kimi-k2.5'];
-    out.sort((a, b) => {
-      const ai = order.indexOf(stripPrefix(a.id));
-      const bi = order.indexOf(stripPrefix(b.id));
-      return (ai === -1 ? order.length : ai) - (bi === -1 ? order.length : bi);
-    });
     return out;
   }
 }
@@ -320,22 +314,16 @@ function toAIModel(info: KimiCodeModelInfo): {
   };
 }
 
-function stripPrefix(id: string): string {
-  return id.includes(':') ? id.split(':').slice(1).join(':') : id;
-}
-
 function prettyName(id: string): string {
   switch (id) {
-    case 'kimi-k2.6': return 'Kimi K2.6';
-    case 'kimi-k2.5': return 'Kimi K2.5';
+    case 'kimi-for-coding': return 'Kimi K2.6 (Kimi Code)';
     default: return id;
   }
 }
 
 function contextWindowFor(id: string): number | undefined {
   switch (id) {
-    case 'kimi-k2.6': return 256_000;
-    case 'kimi-k2.5': return 128_000;
+    case 'kimi-for-coding': return 262_144;
     default: return undefined;
   }
 }

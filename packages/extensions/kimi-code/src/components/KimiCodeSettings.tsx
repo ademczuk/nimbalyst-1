@@ -1,20 +1,20 @@
 /**
  * Settings panel for the Kimi Code CHAT provider.
  *
- * Mirrors packages/extensions/gemini-antigravity/src/components/AntigravitySettings.tsx
- * with two changes:
- *   1. Adds a Moonshot API key input (masked) that persists via onApiKeyChange.
- *      Both kimi-code (chat) and kimi-code-agent (agent) share the same key
- *      slot - "kimi-code" - because they're the same Moonshot account.
- *   2. Skips the per-mount auto-probe of getModels() that gemini's panel does
- *      on transition-to-enabled. Probing before the user has entered an API
- *      key always fails and would surface a confusing error every time the
- *      user toggles the provider on. The user clicks Test Connection when
- *      they're ready instead.
+ * Shape change (commit 9): the panel no longer has an API key input. The
+ * Kimi Code CLI runs an OAuth /login flow that writes
+ * ~/.kimi/credentials/kimi-code.json; this panel surfaces the state of THAT
+ * file (mirroring how gemini-antigravity surfaces ~/.gemini OAuth state).
+ *
+ * Three render states for the OAuth card:
+ *   - valid          green pill, "Connected via Kimi Code CLI", expires-in line
+ *   - expired        yellow pill, "Session expired", instructions to /login
+ *   - not-logged-in  gray pill, "Kimi Code CLI not logged in", instructions
  */
 
 import React from 'react';
 import { KimiCodeProvider } from '../KimiCodeProvider';
+import { KimiCodeRpcClient, type KimiCodeAuthStatus } from '../kimiCodeRpcClient';
 
 interface Model {
   id: string;
@@ -42,22 +42,19 @@ export interface KimiCodeSettingsProps {
   onConfigChange?: (updates: Partial<ProviderConfig>) => void;
 }
 
-/**
- * Both kimi-code providers persist the Moonshot API key in ONE shared slot.
- * Slot is named at the VENDOR level ("moonshot") rather than by provider id
- * because the secret it holds is a Moonshot account credential - one
- * account funds both the chat and agent providers. Main reads the same
- * slot in KimiCodeClient.getMoonshotApiKey().
- */
-const API_KEY_SLOT = 'moonshot';
+function formatRemaining(expiresAt: number): string {
+  const remaining = expiresAt - Date.now() / 1000;
+  if (remaining <= 0) return 'expired';
+  if (remaining < 60) return `${Math.floor(remaining)}s`;
+  if (remaining < 3600) return `${Math.floor(remaining / 60)} min`;
+  return `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m`;
+}
 
 export function KimiCodeSettings({
   config,
-  apiKeys,
   availableModels,
   loading,
   onToggle,
-  onApiKeyChange,
   onModelToggle,
   onSelectAllModels,
   onTestConnection,
@@ -66,13 +63,39 @@ export function KimiCodeSettings({
   const allSelected = availableModels.length > 0
     && availableModels.every((m) => enabledModelIds.includes(m.id));
 
-  const currentApiKey = apiKeys?.[API_KEY_SLOT] ?? '';
-  const hasApiKey = currentApiKey.length > 0;
-
+  const [authStatus, setAuthStatus] = React.useState<KimiCodeAuthStatus | null>(null);
+  const [authProbing, setAuthProbing] = React.useState<boolean>(true);
   const [modelsError, setModelsError] = React.useState<string | null>(null);
 
-  // Auto-tick all models on first enable. Mirrors AntigravitySettings. Ref
-  // guard prevents StrictMode double-invoke from racing the persist round-trip.
+  // Poll the local credentials file periodically while the panel is open so
+  // the user sees the CLI's background refreshes reflected in the expiry
+  // countdown. No network traffic - this is a file stat + json parse.
+  React.useEffect(() => {
+    let cancelled = false;
+    const probe = () => {
+      KimiCodeRpcClient.authStatus()
+        .then((s) => {
+          if (!cancelled) {
+            setAuthStatus(s);
+            setAuthProbing(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAuthStatus({ state: 'not-logged-in' });
+            setAuthProbing(false);
+          }
+        });
+    };
+    probe();
+    const id = window.setInterval(probe, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  // Auto-tick all models on first enable - same pattern as AntigravitySettings.
   const autoSelectFiredRef = React.useRef(false);
   React.useEffect(() => {
     if (
@@ -95,6 +118,9 @@ export function KimiCodeSettings({
       });
   }, []);
 
+  const isLoggedIn = authStatus?.state === 'valid';
+  const canTest = !loading && config.testStatus !== 'testing' && (authStatus?.state ?? 'not-logged-in') !== 'not-logged-in';
+
   return (
     <div className="provider-panel kimi-code-panel flex flex-col" data-testid="kimi-code-settings">
       <div className="kimi-code-main-column flex-1 flex flex-col">
@@ -104,40 +130,76 @@ export function KimiCodeSettings({
             Kimi K2.6 (Chat)
           </h3>
           <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-            Talks to Moonshot's Kimi K2.6 through the OpenAI-compatible
-            platform.moonshot.ai API. Requires a Moonshot API key entered below.
-            The key is stored in your local Nimbalyst settings and never read
-            from environment variables.
+            Talks to Kimi K2.6 through the Kimi Code endpoint at api.kimi.com.
+            Auth rides your existing Kimi Code CLI login - no API key entered
+            in Nimbalyst. If you have not yet logged in, open the Kimi Code
+            CLI and run <code className="text-xs bg-[var(--nim-code-bg)] px-1 rounded">/login</code>.
           </p>
         </div>
 
-        {/* API KEY */}
+        {/* OAUTH STATUS CARD */}
         <div
           className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]"
-          data-testid="kimi-code-api-key-section"
+          data-testid="kimi-code-oauth-status"
         >
-          <label htmlFor="kimi-code-api-key" className="block text-base font-semibold text-[var(--nim-text)] mb-2">
-            Moonshot API key
-          </label>
-          <input
-            id="kimi-code-api-key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={currentApiKey}
-            onChange={(e) => onApiKeyChange?.(API_KEY_SLOT, e.target.value)}
-            placeholder="sk-..."
-            className="w-full text-sm bg-[var(--nim-bg-tertiary)] border border-[var(--nim-border)] rounded-md px-3 py-2 text-[var(--nim-text)] placeholder:text-[var(--nim-text-muted)] focus:outline-none focus:border-[var(--nim-primary)]"
-            data-testid="kimi-code-api-key-input"
-          />
-          <p className="text-[12px] text-[var(--nim-text-muted)] mt-2 leading-relaxed">
-            Get a key at <span className="font-mono">platform.moonshot.ai</span>. The same key is shared with the Kimi Code Agent provider.
-          </p>
+          <h4 className="provider-panel-section-title text-base font-semibold mb-3 text-[var(--nim-text)]">
+            Kimi Code CLI authentication
+          </h4>
+
+          {authProbing && (
+            <p className="text-[13px] text-[var(--nim-text-muted)]">Checking for Kimi Code CLI credentials...</p>
+          )}
+
+          {!authProbing && authStatus?.state === 'valid' && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-[var(--nim-success-border,rgba(34,197,94,0.2))] bg-[var(--nim-success-bg,rgba(34,197,94,0.05))]">
+              <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-success)] shrink-0 animate-pulse" />
+              <div>
+                <p className="text-sm font-semibold text-[var(--nim-success-text,rgb(21,128,61))]">
+                  Connected via Kimi Code CLI
+                </p>
+                <p className="text-[13px] text-[var(--nim-text-muted)] mt-0.5">
+                  Access token valid for another <span className="font-semibold text-[var(--nim-text)]">{formatRemaining(authStatus.expiresAt)}</span>; the extension refreshes in the background.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!authProbing && authStatus?.state === 'expired' && (
+            <div className="flex flex-col gap-2 p-3 rounded-lg border border-[var(--nim-warning-border,rgba(234,179,8,0.2))] bg-[var(--nim-warning-bg,rgba(234,179,8,0.05))]">
+              <div className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-warning)] shrink-0" />
+                <p className="text-sm font-semibold text-[var(--nim-warning-text,rgb(161,98,7))]">
+                  Kimi Code session expired
+                </p>
+              </div>
+              <p className="text-[13px] text-[var(--nim-text-muted)] leading-relaxed">
+                The extension will try to refresh automatically using the stored refresh_token. If that fails, open the Kimi Code CLI and run:
+              </p>
+              <code className="block text-[13px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-3 py-2 rounded select-text">
+                /login
+              </code>
+            </div>
+          )}
+
+          {!authProbing && authStatus?.state === 'not-logged-in' && (
+            <div className="flex flex-col gap-2 p-3 rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-surface-2,rgba(0,0,0,0.02))]">
+              <div className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--nim-text-muted)] shrink-0" />
+                <p className="text-sm font-semibold text-[var(--nim-text)]">
+                  Kimi Code CLI not logged in
+                </p>
+              </div>
+              <p className="text-[13px] text-[var(--nim-text-muted)] leading-relaxed">
+                Open the Kimi Code CLI and run <code className="text-xs bg-[var(--nim-code-bg)] px-1 py-0.5 rounded">/login</code> to authenticate.
+                Nimbalyst picks up the credentials from <code className="text-xs bg-[var(--nim-code-bg)] px-1 py-0.5 rounded">~/.kimi/credentials/kimi-code.json</code> automatically.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* CONNECTION TEST */}
         <div
-          className="provider-panel-section kimi-code-test-row py-3 mb-4 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] px-4"
+          className="provider-panel-section py-3 mb-4 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] px-4"
           data-testid="kimi-code-connection-test"
         >
           <div className="flex items-center justify-between gap-3">
@@ -146,14 +208,13 @@ export function KimiCodeSettings({
                 Connection
               </h4>
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Calls GET /v1/models with your key. If it fails, the error is
-                shown below.
+                Hits GET /v1/models on api.kimi.com with your current access token, refreshing if needed.
               </p>
             </div>
             <button
               type="button"
               onClick={() => { void onTestConnection().then(handleProbeModels); }}
-              disabled={loading || config.testStatus === 'testing' || !hasApiKey}
+              disabled={!canTest}
               className={`provider-test-button py-2 px-4 rounded-md text-sm font-medium whitespace-nowrap cursor-pointer transition-all bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)] border border-[var(--nim-border)] hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] disabled:opacity-50 disabled:cursor-not-allowed ${
                 config.testStatus === 'success' ? 'text-[var(--nim-success)] border-[var(--nim-success)]' : ''
               } ${
@@ -175,11 +236,6 @@ export function KimiCodeSettings({
               {config.testMessage}
             </div>
           )}
-          {!hasApiKey && (
-            <div className="text-xs mt-2 text-[var(--nim-text-muted)]">
-              Enter your Moonshot API key above to enable testing.
-            </div>
-          )}
         </div>
 
         {/* ENABLE TOGGLE */}
@@ -198,7 +254,6 @@ export function KimiCodeSettings({
 
         {config.enabled && (
           <>
-            {/* MODELS LIST */}
             <div
               className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0"
               data-testid="kimi-code-models-list"
@@ -228,9 +283,9 @@ export function KimiCodeSettings({
                   <p className="text-[13px] text-[var(--nim-text-muted)]">
                     {loading
                       ? 'Loading models...'
-                      : hasApiKey
+                      : isLoggedIn
                         ? 'No models found. Test the connection to fetch the live catalog.'
-                        : 'Enter a Moonshot API key to load the model catalog.'}
+                        : 'Log in via the Kimi Code CLI to load the model catalog.'}
                   </p>
                 </>
               ) : (
@@ -254,8 +309,7 @@ export function KimiCodeSettings({
 
             <div className="provider-panel-section py-3">
               <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
-                Default model is <strong>Kimi K2.6</strong> (256K context).
-                Pricing and quota live on your Moonshot dashboard.
+                Default model is <strong>kimi-for-coding</strong> (Kimi K2.6, 256K context). Endpoint: <code className="text-xs bg-[var(--nim-code-bg)] px-1 rounded">api.kimi.com/coding/v1</code>.
               </p>
             </div>
           </>

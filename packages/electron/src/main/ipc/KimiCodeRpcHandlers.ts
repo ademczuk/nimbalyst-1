@@ -40,11 +40,13 @@ import { AISessionsRepository } from '@nimbalyst/runtime';
 import { buildMetaAgentSystemPrompt } from '@nimbalyst/runtime/ai/server';
 import { MetaAgentService } from '../services/MetaAgentService';
 import {
-  testConnection as moonshotTestConnection,
-  getAvailableModels as moonshotGetModels,
-  complete as moonshotComplete,
-  type MoonshotChatMessage,
-  type MoonshotModelInfo,
+  testConnection as kimiCodeTestConnection,
+  getAvailableModels as kimiCodeGetModels,
+  complete as kimiCodeComplete,
+  readAuthStatus as kimiCodeReadAuthStatus,
+  type KimiChatMessage,
+  type KimiModelInfo,
+  type KimiAuthStatus,
 } from '../services/KimiCodeClient';
 
 interface Ok<T> { ok: true; data: T }
@@ -257,27 +259,41 @@ export function registerKimiCodeRpcHandlers(): void {
 
   safeHandle('kimi-code:chat:test-connection', async (): Promise<Result<void>> => {
     try {
-      await moonshotTestConnection();
+      await kimiCodeTestConnection();
       return okVoid();
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e));
     }
   });
 
-  safeHandle('kimi-code:chat:get-models', async (): Promise<Result<MoonshotModelInfo[]>> => {
+  safeHandle('kimi-code:chat:get-models', async (): Promise<Result<KimiModelInfo[]>> => {
     try {
-      const models = await moonshotGetModels();
+      const models = await kimiCodeGetModels();
       return ok(models);
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e));
     }
   });
 
+  /**
+   * Read-only auth status for the Settings panel. Touches no network -
+   * reports the state of the local ~/.kimi/credentials/kimi-code.json file.
+   * The panel uses this to drive the OAuth-status card (mirrors the gemini-
+   * antigravity pattern that surfaces ~/.gemini OAuth state).
+   */
+  safeHandle('kimi-code:auth:status', async (): Promise<Result<KimiAuthStatus>> => {
+    try {
+      const status = await kimiCodeReadAuthStatus();
+      return ok(status);
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e));
+    }
+  });
+
   safeHandle('kimi-code:chat:complete', async (_e, payload: {
-    messages?: MoonshotChatMessage[];
+    messages?: KimiChatMessage[];
     model?: string;
     maxTokens?: number;
-    temperature?: number;
     timeoutMs?: number;
   }): Promise<Result<string>> => {
     try {
@@ -287,12 +303,11 @@ export function registerKimiCodeRpcHandlers(): void {
       if (typeof payload.model !== 'string' || payload.model === '') {
         return err('kimi-code:chat:complete requires a model id');
       }
-      const text = await moonshotComplete(
+      const text = await kimiCodeComplete(
         {
           messages: payload.messages,
           model: payload.model,
           maxTokens: payload.maxTokens,
-          temperature: payload.temperature,
         },
         payload.timeoutMs,
       );
