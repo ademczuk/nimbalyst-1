@@ -20,6 +20,7 @@ const BUTTON_META: Record<HideableGutterButton, { label: string; icon: string }>
   'codex-usage':       { label: 'Codex Usage',       icon: 'speed' },
   'gemini-usage':      { label: 'Gemini Usage',      icon: 'smart_toy' },
   'antigravity-usage': { label: 'Antigravity Usage', icon: 'auto_awesome' },
+  'kimi-usage':        { label: 'Kimi Status',       icon: 'kimi' },
   'extension-dev':     { label: 'Extension Dev',     icon: 'extension' },
 };
 
