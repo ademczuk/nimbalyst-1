@@ -1,44 +1,67 @@
 /**
  * KimiCodeToolLoopProtocol (extension-side, renderer-safe).
  *
- * Stateful multi-turn conversation manager for the kimi-code-agent provider.
- * Mirrors packages/extensions/gemini-antigravity/src/AntigravityToolLoopProtocol.ts.
+ * Multi-turn agent loop using K2.6's native OpenAI-compatible function-
+ * calling shape. Tools are passed as the `tools` parameter on
+ * /v1/chat/completions; the model replies with `tool_calls` on the
+ * assistant message; tool results are sent back in the next turn as
+ * `role: 'tool'` messages tied to the originating `tool_call_id`.
  *
- * Although Moonshot Kimi natively supports OpenAI-style `tools` /
- * `tool_choice` in /v1/chat/completions, this protocol uses the same
- * prompt-injection approach gemini's antigravity provider uses (tools are
- * injected as a structured block in the system prompt, model is instructed to
- * reply with a {"tool_call":{...}} JSON envelope). This deliberately mirrors
- * gemini's shape for review parity. Migration to native function calling is
- * intentionally deferred.
- *
- * TODO(reshape): once the aiAgentProviders + backendModules SDK lands and the
- * gemini extension is reshaped, switch this protocol to use Moonshot's native
- * tools / tool_choice on /v1/chat/completions. K2.6 supports them and the
- * round-trip would drop the JSON-envelope parsing layer entirely. The host's
- * agent contract (get-tools / execute-tool IPC) doesn't change.
+ * Migrated 2026-05-27 from the earlier JSON-envelope prompt-injection
+ * protocol (mirrored from gemini-antigravity, which had to use a
+ * prompt-injected envelope because the antigravity language server has
+ * no native tool surface). K2.6 supports native tool_calls so the
+ * injection layer is gone, along with the parser/stripper and the
+ * synthetic `[Tool call: X]` placeholder text that was leaking into
+ * the transcript renderer.
  */
 
-import { KimiCodeRpcClient, type KimiCodeChatMessage } from './kimiCodeRpcClient';
+import { KimiCodeRpcClient, type KimiCodeChatMessage, type KimiCodeToolCall, type KimiCodeToolDef } from './kimiCodeRpcClient';
 
-interface OpenAITool {
-  type: 'function';
-  function: {
-    name: string;
-    description?: string;
-    parameters?: Record<string, unknown>;
-  };
-}
-
-export interface ToolCallRequest {
+export interface ToolCallStep {
+  type: 'tool_call';
+  id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  args: Record<string, unknown>;
 }
 
-export interface ProtocolMessage {
-  role: 'user' | 'assistant' | 'tool';
+export interface ToolResultStep {
+  type: 'tool_result';
+  id: string;
+  name: string;
+  result: string;
+}
+
+export interface TextStep {
+  type: 'text';
   content: string;
+}
+
+export interface CompleteStep {
+  type: 'complete';
+}
+
+export type ProtocolStep = ToolCallStep | ToolResultStep | TextStep | CompleteStep;
+
+/**
+ * In-memory message history. Mirrors OpenAI's shape but keeps `toolName` as
+ * a convenience field on tool results for callers that don't want to look
+ * up the originating tool_call by id.
+ */
+interface ProtocolMessage {
+  role: 'user' | 'assistant' | 'tool';
+  /**
+   * Optional on assistant turns that ONLY issued tool_calls (the Kimi API
+   * rejects empty content alongside tool_calls). We persist undefined for
+   * those turns and omit the key in buildMessages.
+   */
+  content?: string;
+  /** Tool calls the assistant issued on this turn. */
+  toolCalls?: KimiCodeToolCall[];
+  /** Tool name; convenience field on 'tool' role. */
   toolName?: string;
+  /** Required on 'tool' role; ties the result to an assistant tool_call. */
+  toolCallId?: string;
 }
 
 export class KimiCodeToolLoopProtocol {
@@ -61,6 +84,18 @@ export class KimiCodeToolLoopProtocol {
     this.aborted = false;
   }
 
+  /**
+   * Seed history from the host's session log when resuming a session. The
+   * host's format carries role + content; for tool turns it carries a
+   * compact `toolCall: { name, result }` blob. We convert those into the
+   * native protocol shape - synthesizing tool_call_ids when missing so the
+   * model sees a coherent thread.
+   *
+   * Note: seeded turns lose the original assistant `tool_calls` envelope
+   * because the host doesn't persist it. The model will see the user's
+   * prompt and the assistant's previous text answer, which is enough
+   * context to continue.
+   */
   seedHistory(messages: Array<{
     role?: string;
     content?: string;
@@ -83,9 +118,16 @@ export class KimiCodeToolLoopProtocol {
                   ? msg.toolCall.result
                   : JSON.stringify(msg.toolCall.result))
               : '');
-        if (resultText) {
-          this.history.push({ role: 'tool', content: resultText, toolName });
-        }
+        if (!resultText) continue;
+        // Synthesize an id so OpenAI shape is preserved; the model never
+        // sees the seeded turns again because each fresh run() builds
+        // messages from the live history forward.
+        this.history.push({
+          role: 'tool',
+          content: resultText,
+          toolName,
+          toolCallId: `seed-${this.history.length}`,
+        });
       }
     }
     this.aborted = false;
@@ -98,176 +140,128 @@ export class KimiCodeToolLoopProtocol {
   async *run(
     userMessage: string,
     systemPrompt: string,
-    tools: OpenAITool[],
+    tools: KimiCodeToolDef[],
     executeToolCall: (name: string, args: Record<string, unknown>) => Promise<unknown>,
-    timeoutMs = 120_000
-  ): AsyncGenerator<
-    | { type: 'text'; content: string }
-    | { type: 'tool_call'; name: string; args: Record<string, unknown> }
-    | { type: 'tool_result'; name: string; result: string }
-    | { type: 'complete' }
-  > {
+    timeoutMs = 120_000,
+  ): AsyncGenerator<ProtocolStep> {
     this.aborted = false;
     this.history.push({ role: 'user', content: userMessage });
-
-    const fullSystemPrompt = this.buildInstructedSystemPrompt(systemPrompt, tools);
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       if (this.aborted) return;
 
-      const messages = this.buildMessages(fullSystemPrompt);
-      const response = await KimiCodeRpcClient.complete({
+      const messages = this.buildMessages(systemPrompt);
+      const reply = await KimiCodeRpcClient.complete({
         messages,
         model: this.modelId,
+        tools: tools.length > 0 ? tools : undefined,
         timeoutMs,
       });
 
       if (this.aborted) return;
 
-      const toolCall = this.parseToolCall(response);
-      if (!toolCall) {
-        const text = this.stripToolCallJson(response).trim();
-        this.history.push({ role: 'assistant', content: text });
+      const text = reply.content?.trim() ?? '';
+      const toolCalls = reply.toolCalls ?? [];
+
+      // Persist the assistant turn. content is omitted when empty alongside
+      // tool_calls per the API quirk (buildMessages enforces the omission).
+      this.history.push({
+        role: 'assistant',
+        content: text.length > 0 ? text : undefined,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      });
+
+      if (text.length > 0) {
         yield { type: 'text', content: text };
+      }
+
+      if (toolCalls.length === 0) {
+        // Conversation is done - the assistant gave a final text answer or
+        // declined to use a tool. Either way we're out of the loop.
         yield { type: 'complete' };
         return;
       }
 
-      const thinkingText = this.stripToolCallJson(response).trim();
-      const assistantEntry = thinkingText
-        ? `${thinkingText}\n[Tool call: ${toolCall.name}]`
-        : `[Tool call: ${toolCall.name}]`;
-      this.history.push({ role: 'assistant', content: assistantEntry });
+      // Execute each tool call the assistant issued. We run them
+      // sequentially - K2.6 can issue multiple tool_calls per turn but the
+      // meta-agent dispatch path is not built for parallel invocation, and
+      // serial execution keeps the streamed UI predictable.
+      for (const tc of toolCalls) {
+        if (this.aborted) return;
 
-      yield { type: 'tool_call', name: toolCall.name, args: toolCall.arguments };
+        let parsedArgs: Record<string, unknown> = {};
+        try {
+          parsedArgs = tc.function.arguments
+            ? (JSON.parse(tc.function.arguments) as Record<string, unknown>)
+            : {};
+        } catch {
+          // Malformed JSON - pass an empty arg set rather than crashing.
+          // The tool handler should surface its own validation error.
+          parsedArgs = {};
+        }
 
-      let resultText: string;
-      try {
-        const rawResult = await executeToolCall(toolCall.name, toolCall.arguments);
-        resultText = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
-      } catch (err) {
-        resultText = JSON.stringify({
-          isError: true,
-          error: err instanceof Error ? err.message : String(err),
+        yield { type: 'tool_call', id: tc.id, name: tc.function.name, args: parsedArgs };
+
+        let resultText: string;
+        try {
+          const rawResult = await executeToolCall(tc.function.name, parsedArgs);
+          resultText = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+        } catch (err) {
+          resultText = JSON.stringify({
+            isError: true,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+
+        if (this.aborted) return;
+
+        this.history.push({
+          role: 'tool',
+          content: resultText,
+          toolName: tc.function.name,
+          toolCallId: tc.id,
         });
+
+        yield { type: 'tool_result', id: tc.id, name: tc.function.name, result: resultText };
       }
-
-      if (this.aborted) return;
-
-      this.history.push({ role: 'tool', content: resultText, toolName: toolCall.name });
-      yield { type: 'tool_result', name: toolCall.name, result: resultText };
     }
 
     yield { type: 'text', content: '[Agent reached tool-call iteration limit]' };
     yield { type: 'complete' };
   }
 
-  // ---- Prompt construction ------------------------------------------------
-
-  private buildInstructedSystemPrompt(baseSystemPrompt: string, tools: OpenAITool[]): string {
-    if (tools.length === 0) {
-      return baseSystemPrompt;
-    }
-
-    const toolSchemas = tools.map(t => ({
-      name: t.function.name,
-      description: t.function.description ?? '',
-      parameters: t.function.parameters ?? {},
-    }));
-
-    const toolBlock = [
-      '## Available Tools',
-      '',
-      'You may call tools to help accomplish tasks. When you want to call a tool,',
-      'respond with ONLY the following JSON block (no markdown fences, no extra text',
-      'before or after it):',
-      '',
-      '{"tool_call":{"name":"<tool_name>","arguments":{...}}}',
-      '',
-      'After the tool runs, you will receive the result and can continue. When you',
-      'are done with tool calls and ready to give your final answer, respond with',
-      'plain text only (no JSON tool_call block).',
-      '',
-      '### Tool Definitions',
-      '```json',
-      JSON.stringify(toolSchemas, null, 2),
-      '```',
-    ].join('\n');
-
-    return `${toolBlock}\n\n${baseSystemPrompt}`;
-  }
-
   /**
    * Convert the in-memory history into a real OpenAI-shaped messages array.
-   * Tool results are folded into user-role turns so we don't need tool_call_id
-   * plumbing (matches the prompt-injection contract above; the model receives
-   * tool results as natural-language user turns prefixed with "Tool result").
+   * - assistant turns with tool_calls but no text OMIT the content key (the
+   *   Kimi endpoint returns 400 if `content` is present and empty alongside
+   *   tool_calls; verified against the CLI's kimi.py source).
+   * - tool turns carry tool_call_id + name + content.
    */
   private buildMessages(systemPrompt: string): KimiCodeChatMessage[] {
-    const out: KimiCodeChatMessage[] = [{ role: 'system', content: systemPrompt }];
+    const out: KimiCodeChatMessage[] = systemPrompt
+      ? [{ role: 'system', content: systemPrompt }]
+      : [];
     for (const msg of this.history) {
       if (msg.role === 'user') {
-        out.push({ role: 'user', content: msg.content });
+        out.push({ role: 'user', content: msg.content ?? '' });
       } else if (msg.role === 'assistant') {
-        out.push({ role: 'assistant', content: msg.content });
+        const entry: KimiCodeChatMessage = { role: 'assistant' };
+        if (typeof msg.content === 'string' && msg.content.length > 0) {
+          entry.content = msg.content;
+        }
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          entry.tool_calls = msg.toolCalls;
+        }
+        out.push(entry);
       } else if (msg.role === 'tool') {
         out.push({
-          role: 'user',
-          content: `Tool result (${msg.toolName ?? 'unknown'}): ${msg.content}`,
+          role: 'tool',
+          content: msg.content ?? '',
+          tool_call_id: msg.toolCallId ?? '',
+          name: msg.toolName,
         });
       }
     }
     return out;
-  }
-
-  // ---- Response parsing ---------------------------------------------------
-
-  parseToolCall(response: string): ToolCallRequest | null {
-    if (!response.includes('tool_call')) return null;
-
-    const stripped = response.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-    const keyIdx = stripped.search(/"tool_call"\s*:/);
-    if (keyIdx === -1) return null;
-
-    let openBrace = keyIdx - 1;
-    while (openBrace >= 0 && stripped[openBrace] !== '{') {
-      openBrace--;
-    }
-    if (openBrace < 0) return null;
-
-    let depth = 0;
-    let closeIdx = openBrace;
-    for (let i = openBrace; i < stripped.length; i++) {
-      if (stripped[i] === '{') depth++;
-      else if (stripped[i] === '}') {
-        depth--;
-        if (depth === 0) { closeIdx = i; break; }
-      }
-    }
-    if (depth !== 0) return null;
-
-    const candidate = stripped.slice(openBrace, closeIdx + 1);
-    try {
-      const parsed = JSON.parse(candidate) as { tool_call?: { name?: unknown; arguments?: unknown } };
-      const tc = parsed.tool_call;
-      if (!tc || typeof tc.name !== 'string') return null;
-
-      const args: Record<string, unknown> =
-        typeof tc.arguments === 'object' && tc.arguments !== null
-          ? tc.arguments as Record<string, unknown>
-          : {};
-
-      return { name: tc.name, arguments: args };
-    } catch {
-      return null;
-    }
-  }
-
-  private stripToolCallJson(response: string): string {
-    if (!response.includes('tool_call')) return response;
-    let cleaned = response.replace(/```json\s*\{"tool_call"[\s\S]*?\}\s*```/g, '');
-    cleaned = cleaned.replace(/\{[^{}]*"tool_call"\s*:[^{}]*(\{[^{}]*\})[^{}]*\}/g, '');
-    cleaned = cleaned.replace(/\{.*"tool_call".*\}/g, '');
-    return cleaned.trim();
   }
 }

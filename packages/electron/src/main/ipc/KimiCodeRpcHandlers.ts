@@ -47,6 +47,8 @@ import {
   type KimiChatMessage,
   type KimiModelInfo,
   type KimiAuthStatus,
+  type KimiToolDef,
+  type KimiCompletionReply,
 } from '../services/KimiCodeClient';
 
 interface Ok<T> { ok: true; data: T }
@@ -294,8 +296,10 @@ export function registerKimiCodeRpcHandlers(): void {
     messages?: KimiChatMessage[];
     model?: string;
     maxTokens?: number;
+    tools?: KimiToolDef[];
+    tool_choice?: 'auto' | 'none';
     timeoutMs?: number;
-  }): Promise<Result<string>> => {
+  }): Promise<Result<KimiCompletionReply>> => {
     try {
       if (!Array.isArray(payload?.messages) || payload.messages.length === 0) {
         return err('kimi-code:chat:complete requires non-empty messages[]');
@@ -303,15 +307,17 @@ export function registerKimiCodeRpcHandlers(): void {
       if (typeof payload.model !== 'string' || payload.model === '') {
         return err('kimi-code:chat:complete requires a model id');
       }
-      const text = await kimiCodeComplete(
+      const reply = await kimiCodeComplete(
         {
           messages: payload.messages,
           model: payload.model,
           maxTokens: payload.maxTokens,
+          tools: payload.tools,
+          tool_choice: payload.tool_choice,
         },
         payload.timeoutMs,
       );
-      return ok(text);
+      return ok(reply);
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e));
     }

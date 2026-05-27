@@ -9,6 +9,10 @@
  *
  * Mirrors packages/extensions/gemini-antigravity/src/AntigravityProvider.ts.
  *
+ * Tool loop: not applicable here; the chat provider sends single-shot
+ * completions with no tools. The companion KimiCodeAgentProvider uses native
+ * OpenAI-compatible function calling via KimiCodeToolLoopProtocol.
+ *
  * TODO(reshape): when the aiAgentProviders + backendModules SDK contract lands
  * and the gemini extension is reshaped, the chat-only contribution moves to
  * the future aiProviders[] entry (reserved per Greg's reply on #96) and the
@@ -156,13 +160,16 @@ export class KimiCodeProvider {
     }
 
     try {
-      const text = await KimiCodeRpcClient.complete({
+      const reply = await KimiCodeRpcClient.complete({
         messages: [{ role: 'user', content: fullMessage }],
         model: this.modelId,
+        // Chat provider does NOT pass tools; the agent provider does that
+        // separately via KimiCodeToolLoopProtocol.
       });
 
       if (this.aborted) return;
 
+      const text = reply.content ?? '';
       if (text) {
         yield { type: 'text', content: text };
       }

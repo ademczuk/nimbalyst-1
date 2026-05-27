@@ -18,16 +18,17 @@
  * spawns a real Claude Code or Codex child session (optionally in a fresh
  * worktree). This matches the antigravity meta-agent wiring exactly.
  *
+ * Tool loop: native OpenAI-compatible function calling via the `tools` /
+ * `tool_choice` parameters on /v1/chat/completions. Migrated from the
+ * JSON-envelope prompt-injection approach mirrored from gemini-antigravity
+ * (gemini's protocol has to inject because Antigravity has no native tool
+ * surface; K2.6 does, so we use it).
+ *
  * TODO(reshape): when the aiAgentProviders + backendModules SDK lands and
  * gemini is reshaped, this provider moves to an aiAgentProviders[] manifest
  * entry that references a backendModules[] id, and the IPC channels collapse
  * into the backend-module RPC bridge. The host contract (get-tools, get-
  * system-prompt, execute-tool, meta-agent dispatch) stays identical.
- *
- * TODO(reshape): K2.6 supports native OpenAI-style tools / tool_choice on
- * /v1/chat/completions. Once gemini is reshaped, swap KimiCodeToolLoopProtocol
- * for a native function-calling loop. This will drop the JSON-envelope parsing
- * layer and remove a class of model-output-formatting brittleness.
  */
 
 import type { StreamChunk } from '@nimbalyst/runtime/ai/server';
@@ -205,9 +206,14 @@ export class KimiCodeAgentProvider {
       }
 
       let finalText = '';
-      let toolCallSeq = 0;
       let sawText = false;
-      const lastToolResult = new Map<string, { id: string; name: string; args: Record<string, unknown> }>();
+      // Track pending tool calls by their REAL OpenAI call id (e.g.
+      // "call_abc123") returned from the API. The protocol yields tool_call
+      // and tool_result with the same id; we re-emit a complete tool_call
+      // chunk (args + result) when the result arrives so the host's
+      // transcript widget updates in place rather than rendering two
+      // separate messages.
+      const pendingCalls = new Map<string, { id: string; name: string; args: Record<string, unknown> }>();
 
       for await (const step of this.toolLoop.run(
         userTurn,
@@ -218,18 +224,17 @@ export class KimiCodeAgentProvider {
         if (ctrl.signal.aborted) break;
 
         if (step.type === 'tool_call') {
-          const id = `kc-${Date.now()}-${toolCallSeq++}`;
-          lastToolResult.set(step.name, { id, name: step.name, args: step.args });
+          pendingCalls.set(step.id, { id: step.id, name: step.name, args: step.args });
           yield {
             type: 'tool_call',
             toolCall: {
-              id,
+              id: step.id,
               name: step.name,
               arguments: step.args,
             },
           };
         } else if (step.type === 'tool_result') {
-          const pending = lastToolResult.get(step.name);
+          const pending = pendingCalls.get(step.id);
           if (pending) {
             yield {
               type: 'tool_call',
@@ -240,7 +245,7 @@ export class KimiCodeAgentProvider {
                 result: step.result,
               },
             };
-            lastToolResult.delete(step.name);
+            pendingCalls.delete(step.id);
           }
         } else if (step.type === 'text') {
           finalText = step.content;

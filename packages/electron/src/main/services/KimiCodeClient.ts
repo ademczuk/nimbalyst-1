@@ -373,17 +373,64 @@ async function getValidAccessToken(): Promise<string> {
   return fresh.access_token;
 }
 
+/** OpenAI-compatible chat message. */
 export interface KimiChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  /**
+   * Optional on assistant messages that ONLY issue tool_calls. The Kimi
+   * endpoint rejects assistant messages with empty/whitespace `content`
+   * alongside `tool_calls` (HTTP 400 "text content is empty"), so callers
+   * must OMIT the key entirely when there's no text - undefined is the
+   * only safe shape.
+   */
+  content?: string;
+  /** Required when role === 'tool'; ties the result to the originating call. */
   tool_call_id?: string;
+  /** Tool name; required on 'tool' role. */
   name?: string;
+  /** Present on assistant messages that issued tool calls. */
+  tool_calls?: KimiToolCall[];
+}
+
+/** OpenAI-style tool call carried on an assistant message. */
+export interface KimiToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    /** JSON-encoded string per OpenAI contract. */
+    arguments: string;
+  };
+}
+
+/** OpenAI-style tool definition passed in the request body. */
+export interface KimiToolDef {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
 }
 
 export interface KimiCompletionRequest {
   messages: KimiChatMessage[];
   model: string;
   maxTokens?: number;
+  /** Tools available for the model to call (OpenAI function-calling shape). */
+  tools?: KimiToolDef[];
+  /** OpenAI tool_choice. K2.6 supports 'auto' and 'none'; 'required' is rejected. */
+  tool_choice?: 'auto' | 'none';
+}
+
+/** Assistant turn from /v1/chat/completions, unpacked from choices[0].message. */
+export interface KimiCompletionReply {
+  /** Text content, if any. Null/empty when the model issued only tool_calls. */
+  content: string | null;
+  /** Tool calls the model wants the host to execute. */
+  toolCalls: KimiToolCall[];
+  /** OpenAI finish_reason: 'stop' | 'tool_calls' | 'length' | ... */
+  finishReason: string;
 }
 
 export interface KimiModelInfo {
@@ -462,7 +509,7 @@ export async function getAvailableModels(): Promise<KimiModelInfo[]> {
   return ids.map(id => ({ id, ...annotate(id) }));
 }
 
-export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
+export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<KimiCompletionReply> {
   // NOTE: deliberately no `temperature` field - the Kimi model fixes
   // temperature internally and returns 400 on any caller-supplied value.
   // Same constraint applies to api.kimi.com/coding/v1 as to api.moonshot.ai/v1.
@@ -472,6 +519,14 @@ export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_T
     stream: false,
   };
   if (typeof req.maxTokens === 'number') payload.max_tokens = req.maxTokens;
+  if (Array.isArray(req.tools) && req.tools.length > 0) {
+    payload.tools = req.tools;
+    // tool_choice defaults to 'auto' when tools are present; only set when
+    // the caller explicitly opts out via 'none'. K2.6 rejects 'required'.
+    if (req.tool_choice && req.tool_choice !== 'auto') {
+      payload.tool_choice = req.tool_choice;
+    }
+  }
 
   const headers = {
     ...(await bearerHeaders()),
@@ -491,13 +546,24 @@ export async function complete(req: KimiCompletionRequest, timeoutMs = DEFAULT_T
     );
   }
   const parsed = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: KimiToolCall[];
+      };
+      finish_reason?: string;
+    }>;
   };
-  const text = parsed.choices?.[0]?.message?.content;
-  if (typeof text !== 'string') {
-    throw new KimiCodeApiError(200, 'Kimi Code returned an empty response body (no choices[0].message.content).');
+  const choice = parsed.choices?.[0];
+  if (!choice) {
+    throw new KimiCodeApiError(200, 'Kimi returned no choices[0].');
   }
-  return text;
+  const message = choice.message ?? {};
+  return {
+    content: typeof message.content === 'string' ? message.content : null,
+    toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
+    finishReason: choice.finish_reason ?? 'stop',
+  };
 }
 
 /**

@@ -1,32 +1,19 @@
 /**
- * Renderer-side RPC client for the Moonshot Kimi K2 platform API.
+ * Renderer-side RPC client for the Moonshot Kimi platform API.
  *
- * Moonshot's API is OpenAI-compatible at https://api.moonshot.ai/v1. Neither
- * Node's https module nor fetch-with-API-key-from-electron-store is something
- * we want to do in the renderer, so this extension delegates every server
- * interaction to a main-process IPC bridge (`kimi-code:*`). The bridge owns
- * the HTTP client, the API key resolution (electron-store, NEVER process.env
- * per the repo's CLAUDE.md "Never Use Environment Variables as Implicit API
- * Key Sources" rule), and the response parsing.
+ * Auth + transport: delegates to a main-process IPC bridge (`kimi-code:*`)
+ * that owns the HTTP client, the OAuth-file read (~/.kimi/credentials/
+ * kimi-code.json), and the User-Agent + X-Msh-* device headers Moonshot's
+ * api.kimi.com endpoint pins to.
  *
  * Channels (registered in packages/electron/src/main/ipc/KimiCodeRpcHandlers.ts):
  *   - kimi-code:chat:get-models           -> { ok, data: KimiCodeModelInfo[] }
- *   - kimi-code:chat:complete             -> { ok, data: text }
+ *   - kimi-code:chat:complete             -> { ok, data: KimiCompletionReply }
  *   - kimi-code:chat:test-connection      -> { ok } | { ok:false, error }
+ *   - kimi-code:auth:status               -> { ok, data: KimiCodeAuthStatus }
  *   - kimi-code:agent:get-system-prompt   -> { ok, data: systemPrompt }
  *   - kimi-code:agent:get-tools           -> { ok, data: OpenAITool[] }
  *   - kimi-code:agent:execute-tool        -> { ok, data: result }
- *
- * The bridge never exposes raw API keys or sockets; it only passes JSON-
- * serializable payloads.
- *
- * Mirrors the shape of packages/extensions/gemini-antigravity/src/antigravityRpcClient.ts.
- *
- * TODO(reshape): when the aiAgentProviders + backendModules SDK contract lands,
- * this client moves INSIDE the extension's backend-module entry (utility-process
- * runtime) rather than going over IPC to a hand-written main-process handler.
- * The shape stays the same; the transport changes from window.electronAPI.invoke
- * to the backend-module RPC bridge.
  */
 
 export interface KimiCodeModelInfo {
@@ -48,24 +35,65 @@ export type KimiCodeAuthStatus =
 /** OpenAI-compatible chat message. */
 export interface KimiCodeChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  /** Required when role === 'tool'; identifies the tool call this result corresponds to. */
+  /**
+   * Optional on assistant messages that ONLY issue tool_calls. The Kimi
+   * endpoint rejects assistant messages with empty/whitespace `content`
+   * alongside `tool_calls` (HTTP 400 "text content is empty"), so callers
+   * must OMIT the key entirely - undefined is the only safe shape.
+   */
+  content?: string;
+  /** Required when role === 'tool'; the id of the tool_call this result corresponds to. */
   tool_call_id?: string;
-  /** Optional tool name on assistant turns that issued tool calls. */
+  /** Tool name; required on 'tool' role. */
   name?: string;
+  /** Present on assistant messages that issued tool calls. */
+  tool_calls?: KimiCodeToolCall[];
+}
+
+/** OpenAI-style tool call carried on an assistant message. */
+export interface KimiCodeToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    /** JSON-encoded string per OpenAI's contract. */
+    arguments: string;
+  };
+}
+
+/** OpenAI-style tool definition passed in the request body. */
+export interface KimiCodeToolDef {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
 }
 
 export interface KimiCodeCompleteOptions {
   /** Full conversation as OpenAI-compatible messages. */
   messages: KimiCodeChatMessage[];
-  /** Moonshot model id (e.g. "kimi-k2.6"). */
+  /** Moonshot model id (e.g. "kimi-for-coding"). */
   model: string;
   /** Optional max tokens cap; main applies a sane default if omitted. */
   maxTokens?: number;
-  /** Optional sampling temperature (0..2). */
-  temperature?: number;
+  /** Tools available for the model to call. Pass [] or omit to disable. */
+  tools?: KimiCodeToolDef[];
+  /** OpenAI tool_choice. K2.6 supports 'auto' and 'none'; 'required' is rejected. */
+  tool_choice?: 'auto' | 'none';
   /** Optional request timeout (ms). Main applies a sane default if omitted. */
   timeoutMs?: number;
+}
+
+/** Assistant turn from the model. */
+export interface KimiCompletionReply {
+  /** Text content, if any. Null/empty when the model issued only tool_calls. */
+  content: string | null;
+  /** Tool calls the model wants the host to execute. */
+  toolCalls: KimiCodeToolCall[];
+  /** OpenAI finish_reason: 'stop' | 'tool_calls' | 'length' | ... */
+  finishReason: string;
 }
 
 export interface KimiCodeRpcResult<T> {
@@ -92,14 +120,14 @@ export class KimiCodeRpcClient {
     await call<void>('kimi-code:chat:test-connection');
   }
 
-  /** Full model catalog from the platform's GET /v1/models, scoped to K2 family. */
+  /** Full model catalog from the platform's GET /v1/models. */
   static async getAvailableModels(): Promise<KimiCodeModelInfo[]> {
     return call<KimiCodeModelInfo[]>('kimi-code:chat:get-models');
   }
 
-  /** One-shot chat completion. Returns the assistant text. */
-  static async complete(opts: KimiCodeCompleteOptions): Promise<string> {
-    return call<string>('kimi-code:chat:complete', opts);
+  /** One-shot chat completion. Returns the assistant message (content +/or tool_calls). */
+  static async complete(opts: KimiCodeCompleteOptions): Promise<KimiCompletionReply> {
+    return call<KimiCompletionReply>('kimi-code:chat:complete', opts);
   }
 
   /** Read-only auth status check. Touches no network; mirrors the local
