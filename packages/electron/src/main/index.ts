@@ -113,6 +113,7 @@ import { getGeminiUsageService } from './services/GeminiUsageService';
 import { registerExtensionHandlers, getClaudePluginPaths, initializeExtensionFileTypes } from './ipc/ExtensionHandlers';
 import { registerExtensionProviderHandlers } from './ipc/ExtensionProviderHandlers';
 import { registerAntigravityRpcHandlers } from './ipc/AntigravityRpcHandlers';
+import { registerKimiCodeRpcHandlers } from './ipc/KimiCodeRpcHandlers';
 import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
@@ -1575,6 +1576,7 @@ app.whenReady().then(async () => {
     registerExtensionProviderHandlers();
     registerExtensionMarketplaceHandlers();
     registerAntigravityRpcHandlers();
+    registerKimiCodeRpcHandlers();
     registerOffscreenEditorHandlers();
 
     // Initialize extension file types (must happen before file operations)
