@@ -67,6 +67,14 @@ const CUSTOM_ICONS: Record<string, (size: number, className: string) => React.Re
       <path d="M12 1.5c.276 0 .5.224.5.5 0 2.652.838 4.83 2.439 6.452C16.538 10.075 18.685 10.918 21.5 11.5c.225.046.354.224.354.5s-.13.454-.354.5c-2.815.582-4.962 1.425-6.561 3.048C13.338 17.17 12.5 19.348 12.5 22c0 .276-.224.5-.5.5s-.5-.224-.5-.5c0-2.652-.838-4.83-2.439-6.452C7.462 13.925 5.315 13.082 2.5 12.5 2.275 12.454 2.146 12.276 2.146 12s.13-.454.354-.5C5.315 10.918 7.462 10.075 9.061 8.452 10.662 6.83 11.5 4.652 11.5 2c0-.276.224-.5.5-.5z"/>
     </svg>
   ),
+  // Moonshot Kimi K2 crescent-moon mark. Used by both providers contributed
+  // from the kimi-code marketplace extension (chat + agent). Generic crescent
+  // outline, currentColor for theme tinting.
+  'kimi': (size, className) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M20.354 15.354A9 9 0 0 1 8.646 3.646 9.003 9.003 0 0 0 12 21a9.003 9.003 0 0 0 8.354-5.646Z"/>
+    </svg>
+  ),
 
   // LMStudio logo
   'lmstudio': (size, className) => (

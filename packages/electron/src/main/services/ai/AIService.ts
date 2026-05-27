@@ -496,6 +496,14 @@ export class AIService {
               'antigravity-gemini-agent': {
                 enabled: true,
                 testStatus: "idle",
+              },
+              'kimi-code': {
+                enabled: true,
+                testStatus: "idle",
+              },
+              'kimi-code-agent': {
+                enabled: true,
+                testStatus: "idle",
               }
             }
           },
@@ -2734,6 +2742,18 @@ export class AIService {
           currentKeys['lmstudio_url'] = settings.apiKeys.lmstudio_url as string;
         }
 
+        // Save Moonshot key (shared by the kimi-code chat and agent providers
+        // from the marketplace kimi-code extension - one Moonshot account, two
+        // providers, so the slot is named by vendor not by provider id).
+        if (settings.apiKeys.moonshot !== undefined) {
+          const key = settings.apiKeys.moonshot;
+          if (!key) {
+            delete currentKeys['moonshot'];
+          } else if (key !== this.maskApiKey(currentKeys['moonshot'] || '')) {
+            currentKeys['moonshot'] = key as string;
+          }
+        }
+
         this.getSettingsStore().set('apiKeys', currentKeys);
       }
 
@@ -2902,6 +2922,14 @@ export class AIService {
           // Both the chat provider and the agent provider use the same local server.
           apiKey = 'not-required';
           break;
+        case 'kimi-code':
+        case 'kimi-code-agent':
+          // Moonshot key is stored under apiKeys['moonshot'] (vendor-level slot
+          // shared by both kimi-code providers). The deep test below at
+          // 'kimi-code' / 'kimi-code-agent' does the actual auth probe via the
+          // KimiCodeRpcHandlers bridge.
+          apiKey = (globalApiKeys['moonshot'] as string) || 'not-required';
+          break;
         default:
           // Extension-contributed providers may not need an api key (they bring
           // their own auth). If the provider is registered in ProviderRegistry,
@@ -3052,6 +3080,29 @@ export class AIService {
         // Auth rides the user's existing Antigravity/Google login; nimbalyst stores no
         // key and never triggers a browser OAuth. This must run in the main process
         // because AntigravityServerManager spawns/attaches to a child process.
+        if (provider === 'kimi-code' || provider === 'kimi-code-agent') {
+          // Moonshot Kimi K2.6 - hit GET /v1/models with the user's stored
+          // key via the kimi-code IPC bridge. The bridge throws a humanized
+          // error when the key is missing or invalid.
+          const { testConnection: testKimiCode, MissingMoonshotApiKeyError } =
+            await import('../KimiCodeClient');
+          try {
+            await testKimiCode();
+            return { success: true };
+          } catch (err) {
+            if (err instanceof MissingMoonshotApiKeyError) {
+              return {
+                success: false,
+                error: 'Moonshot API key not set. Paste a key from platform.moonshot.ai into the Kimi Code settings panel.',
+              };
+            }
+            return {
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
+
         if (provider === 'antigravity-gemini' || provider === 'antigravity-gemini-agent') {
           const { AntigravityServerManager } = await import(
             '@nimbalyst/runtime/ai/server/providers/antigravity/AntigravityServerManager'
@@ -3201,6 +3252,11 @@ export class AIService {
       // Same for the agent variant (Agent Providers panel) -- it shares the local
       // Antigravity server and surfaces its own model subset/labels.
       if (providerSettings['antigravity-gemini-agent']?.enabled === true) enabledSet.add('antigravity-gemini-agent');
+      // kimi-code (Moonshot Kimi K2.6) - both providers gate model fetch on
+      // a Moonshot key being present AND the user toggle being on. Same shape
+      // as openai/claude (key + toggle gate) since Moonshot is a hosted API.
+      if (providerSettings['kimi-code']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code' as AIProviderType);
+      if (providerSettings['kimi-code-agent']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code-agent' as AIProviderType);
 
       const modelsConfig = {
         ...apiKeys,
@@ -3340,6 +3396,18 @@ export class AIService {
           enabled: providerSettings['lmstudio']?.enabled === true,
           models: providerSettings['lmstudio']?.models
         },
+        'kimi-code': {
+          // Moonshot Kimi K2.6 chat provider (marketplace kimi-code extension).
+          // Requires the Moonshot API key under apiKeys['moonshot'] AND the
+          // user toggle. Same shape as openai/claude (hosted API with a key).
+          enabled: providerSettings['kimi-code']?.enabled === true && !!apiKeys['moonshot'],
+          models: providerSettings['kimi-code']?.models
+        } as { enabled: boolean; models?: string[] },
+        'kimi-code-agent': {
+          // Agent variant: same Moonshot account, same key slot.
+          enabled: providerSettings['kimi-code-agent']?.enabled === true && !!apiKeys['moonshot'],
+          models: providerSettings['kimi-code-agent']?.models
+        } as { enabled: boolean; models?: string[] },
         'antigravity-gemini': {
           // Auth rides ~/.gemini (no API key); respect the user's toggle.
           enabled: providerSettings['antigravity-gemini']?.enabled === true,

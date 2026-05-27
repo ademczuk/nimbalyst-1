@@ -21,6 +21,11 @@ export type SettingsCategory =
   // still type-check while routing through the registry.
   | 'antigravity-gemini'
   | 'antigravity-gemini-agent'
+  // kimi-code and kimi-code-agent ship as the `kimi-code` marketplace
+  // extension (Moonshot Kimi K2.6). Same dynamic-sidebar pattern as the
+  // antigravity entries above; IDs listed for the type-level allow-list.
+  | 'kimi-code'
+  | 'kimi-code-agent'
   | 'notifications'
   | 'voice-mode'
   | 'sync'

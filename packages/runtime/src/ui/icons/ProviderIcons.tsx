@@ -18,6 +18,11 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   'gemini-cli': 'gemini-cli',
   'antigravity-gemini': 'gemini',
   'antigravity-gemini-agent': 'gemini',
+  // The 'kimi' icon key renders the Moonshot crescent-moon mark (see
+  // MaterialSymbol CUSTOM_ICONS). Both kimi-code providers (chat + agent)
+  // surface the same brand.
+  'kimi-code': 'kimi',
+  'kimi-code-agent': 'kimi',
 };
 
 export function resolveProviderIcon(provider: string): string {
