@@ -2927,8 +2927,9 @@ export class AIService {
           // Moonshot key is stored under apiKeys['moonshot'] (vendor-level slot
           // shared by both kimi-code providers). The deep test below at
           // 'kimi-code' / 'kimi-code-agent' does the actual auth probe via the
-          // KimiCodeRpcHandlers bridge.
-          apiKey = (globalApiKeys['moonshot'] as string) || 'not-required';
+          // KimiCodeRpcHandlers bridge; the value here is only the
+          // presence/absence sentinel the switch tracks.
+          apiKey = apiKeys['moonshot'] || 'not-required';
           break;
         default:
           // Extension-contributed providers may not need an api key (they bring
@@ -3255,8 +3256,8 @@ export class AIService {
       // kimi-code (Moonshot Kimi K2.6) - both providers gate model fetch on
       // a Moonshot key being present AND the user toggle being on. Same shape
       // as openai/claude (key + toggle gate) since Moonshot is a hosted API.
-      if (providerSettings['kimi-code']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code' as AIProviderType);
-      if (providerSettings['kimi-code-agent']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code-agent' as AIProviderType);
+      if (providerSettings['kimi-code']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code');
+      if (providerSettings['kimi-code-agent']?.enabled === true && !!apiKeys['moonshot']) enabledSet.add('kimi-code-agent');
 
       const modelsConfig = {
         ...apiKeys,
@@ -3402,12 +3403,12 @@ export class AIService {
           // user toggle. Same shape as openai/claude (hosted API with a key).
           enabled: providerSettings['kimi-code']?.enabled === true && !!apiKeys['moonshot'],
           models: providerSettings['kimi-code']?.models
-        } as { enabled: boolean; models?: string[] },
+        },
         'kimi-code-agent': {
           // Agent variant: same Moonshot account, same key slot.
           enabled: providerSettings['kimi-code-agent']?.enabled === true && !!apiKeys['moonshot'],
           models: providerSettings['kimi-code-agent']?.models
-        } as { enabled: boolean; models?: string[] },
+        },
         'antigravity-gemini': {
           // Auth rides ~/.gemini (no API key); respect the user's toggle.
           enabled: providerSettings['antigravity-gemini']?.enabled === true,
