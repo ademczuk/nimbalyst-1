@@ -45,6 +45,46 @@
       "local": true
     },
     {
+      "id": "kimi-code",
+      "name": "Kimi Code",
+      "description": "Moonshot AI Kimi K2.6 via the platform.moonshot.ai OpenAI-compatible API. Contributes both chat and agent providers. Requires a Moonshot API key entered in the settings panel; never sourced from environment variables.",
+      "version": "1.0.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "ai-tools"
+      ],
+      "tags": [
+        "kimi",
+        "moonshot",
+        "k2",
+        "ai",
+        "agent",
+        "chat"
+      ],
+      "icon": "kimi",
+      "screenshots": [],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "network"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "bundled:kimi-code.nimext",
+      "checksum": "4c740c338bc1a73e226a08d002812e3a2028c86e612169ecef48f97bad765010",
+      "repositoryUrl": "",
+      "changelog": "Initial release as marketplace extension.",
+      "tagline": "Moonshot Kimi K2.6 in chat and agent providers",
+      "longDescription": "Adds two providers to Nimbalyst that talk to Moonshot's Kimi K2.6 model through the OpenAI-compatible platform.moonshot.ai API. A chat provider for one-shot prompts and an agent provider with tool-loop support and meta-agent host mode (Kimi K2.6 can spawn Claude or Codex child sessions mid-loop). Requires a Moonshot API key, entered once in the settings panel and stored in the local electron-store; no environment-variable fallback. Default model is kimi-k2.6 (256K context); kimi-k2-thinking and kimi-k2.5 are also surfaced for reasoning and compatibility workflows.",
+      "highlights": [
+        "Moonshot Kimi K2.6 chat provider with 256K context window",
+        "Agent provider with tool-loop and meta-agent host mode",
+        "Spawn Claude or Codex child sessions from a Kimi agent loop",
+        "API key entered once in the settings panel - no env fallback, no key leakage",
+        "OpenAI-compatible request shape; works against api.moonshot.ai/v1"
+      ],
+      "local": true
+    },
+    {
       "id": "com.developer.nimbalyst-mindmap",
       "name": "Nimbalyst Mindmap",
       "description": "A freeform spatial mindmap editor with AI-assisted editing",
@@ -127,7 +167,7 @@
     {
       "id": "com.nimbalyst.astro",
       "name": "Astro",
-      "description": "Visually edit Astro website pages inline â€” changes write back to YAML data files",
+      "description": "Visually edit Astro website pages inline - changes write back to YAML data files",
       "version": "0.2.0",
       "author": "Unknown",
       "categories": [
