@@ -472,10 +472,9 @@ export class CodexAppServerRawParser implements IRawMessageParser {
     const descriptors: CanonicalEventDescriptor[] = [{
       type: 'tool_call_started',
       // Use the SDK-transport tool name so the renderer's special-case
-      // routing in RichTranscriptView picks AsyncEditToolResultCard (which
-      // fetches diffs from session_files + history snapshots via
-      // getToolCallDiffs). See CodexAppServerProtocol.handleItemCompleted for
-      // the parallel decision in the live stream path.
+      // routing in RichTranscriptView picks the main-enriched file_change
+      // renderer. See CodexAppServerProtocol.handleItemCompleted for the
+      // parallel decision in the live stream path.
       toolName: 'file_change',
       toolDisplayName: 'apply_patch',
       arguments: args,

@@ -46,6 +46,7 @@ import { TrayManager } from '../../tray/TrayManager';
 import { logger } from '../../utils/logger';
 import { windowStates, findWindowByWorkspace, getWindowId, createWindow } from '../../window/WindowManager';
 import { sessionFileTracker } from '../SessionFileTracker';
+import { enrichTranscriptMessagesWithToolCallDiffs } from '../TranscriptToolCallEnricher';
 import { extractFilePath } from './tools/extractFilePath';
 import { toolCallMatcher, unwrapShellCommand } from '../ToolCallMatcher';
 import { workspaceFileEditAttributionService } from '../WorkspaceFileEditAttributionService';
@@ -621,6 +622,16 @@ export class AIService {
         } catch (metaErr) {
           logger.main.error(`[AIService] ${source}: error checking meta-agent wakeup:`, metaErr);
         }
+      },
+      onChainSettled: async ({ sessionId: settledSessionId, source: settledSource }) => {
+        // The completion handler in MessageStreamingHandler deferred endSession
+        // because processingSet still contained this session while the inner
+        // sendMessage was running. Now that the chain has fully drained, mark
+        // the session idle and stop its file watcher.
+        const stateManager = getSessionStateManager();
+        logger.main.info(`[AIService] ${settledSource}: chain settled for session ${settledSessionId}, ending session`);
+        await stateManager.endSession(settledSessionId);
+        this.hooklessWatcher.scheduleStop(settledSessionId, 500);
       },
       onPromptClaimed: ({ sessionId: claimedSessionId, promptId }) => {
         targetWindow?.webContents.send('ai:promptClaimed', {
@@ -1769,6 +1780,8 @@ export class AIService {
         console.log(`[SESSION] Session not found: ${sessionId} (this is normal if the session was deleted)`);
         return null;
       }
+
+      session.messages = await enrichTranscriptMessagesWithToolCallDiffs(session.id, session.messages);
 
       // Restore document context state from persisted data (if available)
       // This enables transition detection across app restarts

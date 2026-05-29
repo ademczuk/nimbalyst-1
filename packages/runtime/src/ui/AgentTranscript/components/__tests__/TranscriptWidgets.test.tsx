@@ -1514,8 +1514,7 @@ describe('ToolCallChanges', () => {
   it('returns null when not expanded', () => {
     const { container } = render(
       <ToolCallChanges
-        toolCallItemId="tc-1"
-        getToolCallDiffs={async () => null}
+        diffs={null}
         isExpanded={false}
       />
     );
@@ -1529,8 +1528,7 @@ describe('ToolCallChanges', () => {
 
     render(
       <ToolCallChanges
-        toolCallItemId="tc-2"
-        getToolCallDiffs={async () => [
+        diffs={[
           {
             filePath: '/workspace/nimbalyst-local/plans/formula-sheet-editor.md',
             operation: 'edit',
@@ -1553,11 +1551,6 @@ describe('ToolCallChanges', () => {
         canEmbedFile={(filePath: string) => filePath.endsWith('.excalidraw')}
       />
     );
-
-    expect(screen.queryByText('File Changes')).toBeNull();
-    await rtl.waitFor(() => {
-      expect(screen.getByText('File Changes')).toBeDefined();
-    });
 
     fireEvent.click(screen.getByText('File Changes'));
 

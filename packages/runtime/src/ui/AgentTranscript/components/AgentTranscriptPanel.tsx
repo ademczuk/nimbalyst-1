@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { SessionData } from '../../../ai/server/types';
 import type { TranscriptSettings, PromptMarker, FileEditSummary } from '../types';
-import type { ToolCallDiffResult } from './CustomToolWidgets';
 import { RichTranscriptView } from './RichTranscriptView';
 import { TranscriptSidebar } from './TranscriptSidebar';
 import { FileEditsSidebar } from './FileEditsSidebar';
@@ -97,11 +96,6 @@ interface AgentTranscriptPanelProps {
   } | null;
   /** Optional: App start time (epoch ms) for rendering restart indicator line (dev mode only) */
   appStartTime?: number;
-  /** Optional: Fetch file diffs caused by a specific tool call */
-  getToolCallDiffs?: (
-    toolCallItemId: string,
-    toolCallTimestamp?: number
-  ) => Promise<ToolCallDiffResult[] | null>;
   /** Optional: Render a file using a host-provided embedded editor surface */
   renderEmbeddedFile?: (params: { filePath: string; defaultExpanded?: boolean }) => React.ReactNode;
   /** Optional: Predicate identifying files the host will render via renderEmbeddedFile */
@@ -152,7 +146,6 @@ const AgentTranscriptPanelComponent = React.forwardRef<
   onCompact,
   promptAdditions,
   appStartTime,
-  getToolCallDiffs,
   renderEmbeddedFile,
   canEmbedFile,
   currentTeammates,
@@ -394,7 +387,6 @@ const AgentTranscriptPanelComponent = React.forwardRef<
           currentTeammates={currentTeammates ?? sessionData.metadata?.currentTeammates as Array<{ agentId: string; status: 'running' | 'completed' | 'errored' | 'idle' }> | undefined}
           waitingForNoun={waitingForNoun}
           appStartTime={appStartTime}
-          getToolCallDiffs={getToolCallDiffs}
           renderEmbeddedFile={renderEmbeddedFile}
           canEmbedFile={canEmbedFile}
           onSearchBarVisibilityChange={setSearchBarVisible}

@@ -23,6 +23,7 @@ import {
     getGitCommitProposalResponseChannel,
     resolveGitCommitProposalPromptId,
 } from '../services/ai/gitCommitProposalPromptUtils';
+import { enrichTranscriptMessagesWithToolCallDiffs } from '../services/TranscriptToolCallEnricher';
 
 // Initialize session manager
 const sessionManager = new SessionManager();
@@ -1527,7 +1528,7 @@ export async function registerSessionHandlers() {
         );
 
         const viewModel = TranscriptProjector.project(tailEvents);
-        return viewModel.messages;
+        return await enrichTranscriptMessagesWithToolCallDiffs(sessionId, viewModel.messages);
     });
 
     // DEV/TESTING ONLY: Force a single session's canonical events to be
