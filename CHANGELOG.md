@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Bug fixes go here -->
 - Agent transcript no longer collapses `$7M ... $40M`-style currency text into LaTeX. (#462)
 - Blitz no longer silently dismisses the dialog when run against a workspace whose git repo has no commits. (#455)
+- Import Claude Agent Sessions dialog no longer re-opens on every workspace switch after first use. (#480)
 
 ### Removed
 <!-- Removed features go here -->
