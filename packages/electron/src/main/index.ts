@@ -119,6 +119,7 @@ import { codexUsageService } from './services/CodexUsageService';
 import { codexAuthService } from './services/CodexAuthService';
 import { registerExtensionHandlers, getClaudePluginPaths, initializeExtensionFileTypes } from './ipc/ExtensionHandlers';
 import { registerExtensionPermissionHandlers } from './ipc/ExtensionPermissionHandlers';
+import { installExtensionAgentBridge } from './extensions/extensionAgentBridge';
 import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
@@ -1872,6 +1873,28 @@ app.whenReady().then(async () => {
     registerExtensionPermissionHandlers();
     registerExtensionMarketplaceHandlers();
     registerOffscreenEditorHandlers();
+
+    // Phase 4: install the extension-agent bridge so the runtime-side
+    // `ExtensionAgentProvider` wrapper can route to PrivilegedExtensionHost.
+    // Workspace resolution prefers the focused window's active workspace;
+    // falls back to any window with one open. Returns null if no window has
+    // a workspace path -- the bridge surfaces this as a `no-workspace` error.
+    installExtensionAgentBridge({
+      resolveActiveWorkspacePath: () => {
+        const { BrowserWindow } = require('electron') as typeof import('electron');
+        const focused = BrowserWindow.getFocusedWindow();
+        if (focused) {
+          const state = windowStates.get(focused.id);
+          const path = resolveActiveWorkspacePath(state);
+          if (path) return path;
+        }
+        for (const state of windowStates.values()) {
+          const path = resolveActiveWorkspacePath(state);
+          if (path) return path;
+        }
+        return null;
+      },
+    });
 
     // Initialize extension file types (must happen before file operations)
     markStart('extension-file-types');
