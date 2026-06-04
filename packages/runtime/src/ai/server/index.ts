@@ -20,5 +20,5 @@ export * from './preferredAgentLanguageConfig';
 // extension-agent path can deliver the SAME persona text the built-in
 // providers (claude-code, openai-codex) use. Keeping the source shared means
 // the gemini extension and claude-code never drift.
-export { buildMetaAgentSystemPrompt } from '../prompt';
+export { buildMetaAgentSystemPrompt, buildDevAgentSystemPrompt } from '../prompt';
 export type { MetaAgentWorkflowPreset } from '../prompt';
