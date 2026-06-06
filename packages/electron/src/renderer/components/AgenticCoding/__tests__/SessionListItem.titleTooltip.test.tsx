@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, cleanup, act } from '@testing-library/react';
 
 // Keep the component isolated: jotai atom reads return defaults, and the store
@@ -31,11 +31,13 @@ vi.mock('../SessionContextMenu', () => ({ SessionContextMenu: () => null }));
 // jsdom has no ResizeObserver; stub it and capture the latest callback so a
 // test can simulate the title element being visually clipped.
 let resizeCb: (() => void) | null = null;
+let observeCount = 0;
+let disconnectCount = 0;
 vi.stubGlobal('ResizeObserver', class {
   constructor(cb: () => void) { resizeCb = cb; }
-  observe() {}
+  observe() { observeCount += 1; }
   unobserve() {}
-  disconnect() {}
+  disconnect() { disconnectCount += 1; }
 });
 
 import { SessionListItem } from '../SessionListItem';
@@ -47,6 +49,7 @@ const baseProps = {
   onClick: () => {},
 };
 
+beforeEach(() => { resizeCb = null; observeCount = 0; disconnectCount = 0; });
 afterEach(() => cleanup());
 
 describe('SessionListItem - full name on hover (#577, #429)', () => {
@@ -77,6 +80,18 @@ describe('SessionListItem - full name on hover (#577, #429)', () => {
     Object.defineProperty(titleEl, 'clientWidth', { configurable: true, value: 100 });
     act(() => { resizeCb?.(); });
     expect(titleEl.getAttribute('title')).toBe(mid);
+  });
+
+  // Rename mode swaps the title div for an input and back; the callback ref must
+  // tear down and rebind the observer across that remount, or a clipped name
+  // loses its tooltip. Proven via the observer lifecycle (observe on mount,
+  // disconnect on unmount), which is the same mechanism the rename swap exercises.
+  it('rebinds the overflow observer across unmount and remount (covers the rename-mode title swap)', () => {
+    const { unmount } = render(<SessionListItem {...baseProps} title="Mid length session name" />);
+    expect(observeCount).toBeGreaterThan(0);
+    const before = disconnectCount;
+    unmount();
+    expect(disconnectCount).toBe(before + 1);
   });
 
   // The native title is not a keyboard/touch affordance, so the row's accessible

@@ -392,18 +392,32 @@ export const SessionListItem = memo<SessionListItemProps>(({
   // either JS-truncated past 40 chars, or visually clipped by the row's
   // text-ellipsis in a narrow pane. This avoids a redundant tooltip on names
   // that already fit, in a list users traverse by hovering.
-  const titleRef = useRef<HTMLDivElement>(null);
   const [isTitleClipped, setIsTitleClipped] = useState(false);
-  useEffect(() => {
-    const el = titleRef.current;
+  const titleNodeRef = useRef<HTMLElement | null>(null);
+  const titleObserverRef = useRef<ResizeObserver | null>(null);
+  const remeasureTitle = useCallback(() => {
+    const el = titleNodeRef.current;
+    if (el) { setIsTitleClipped(el.scrollWidth > el.clientWidth); }
+  }, []);
+  // Callback ref so the observer rebinds whenever the title node actually
+  // mounts or unmounts: rename mode swaps the title div for an input, and a
+  // virtualized row remounts on scroll. A dependency-keyed effect would miss
+  // those because the text is unchanged.
+  const titleRef = useCallback((el: HTMLDivElement | null) => {
+    titleObserverRef.current?.disconnect();
+    titleObserverRef.current = null;
+    titleNodeRef.current = el;
     if (!el) { return; }
-    const measure = () => setIsTitleClipped(el.scrollWidth > el.clientWidth);
-    measure();
+    remeasureTitle();
     if (typeof ResizeObserver === 'undefined') { return; }
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(remeasureTitle);
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [truncatedTitle]);
+    titleObserverRef.current = ro;
+  }, [remeasureTitle]);
+  // Re-measure on text change too: ResizeObserver fires on box-size changes,
+  // not when only the text (scrollWidth) changes, e.g. a session auto-titled
+  // while its row stays mounted.
+  useEffect(() => { remeasureTitle(); }, [truncatedTitle, remeasureTitle]);
   const showFullName = displayTitle.length > 40 || isTitleClipped;
 
   // Per-session live activity. Bumped on every `ai:message-logged`; only
