@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, act } from '@testing-library/react';
 
 // Keep the component isolated: jotai atom reads return defaults, and the store
 // atom families are callable stubs so importing them has no side effects.
@@ -28,6 +28,16 @@ vi.mock('../../../store', () => ({
 vi.mock('../../../store/atoms/sessions', () => ({ convertToWorkstreamAtom: () => ({}) }));
 vi.mock('../SessionContextMenu', () => ({ SessionContextMenu: () => null }));
 
+// jsdom has no ResizeObserver; stub it and capture the latest callback so a
+// test can simulate the title element being visually clipped.
+let resizeCb: (() => void) | null = null;
+vi.stubGlobal('ResizeObserver', class {
+  constructor(cb: () => void) { resizeCb = cb; }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+});
+
 import { SessionListItem } from '../SessionListItem';
 
 const baseProps = {
@@ -40,29 +50,39 @@ const baseProps = {
 afterEach(() => cleanup());
 
 describe('SessionListItem - full name on hover (#577, #429)', () => {
-  // The row title carries the full name unconditionally, matching the session
-  // tab (WorkstreamSessionTabs sets title={title}). This covers both JS
-  // truncation past 40 chars and CSS ellipsis clipping a shorter name in a
-  // narrow pane, the gap a >40-char gate would miss.
+  // The hover title appears only when the name is actually hidden: JS-truncated
+  // past 40 chars, or visually clipped by text-ellipsis. No redundant tooltip on
+  // names that already fit, in a list users traverse by hovering.
+  const long = 'A very long session name that runs well past the forty character cutoff';
+
   it('exposes the full name in title for a long, JS-truncated name', () => {
-    const long = 'A very long session name that runs well past the forty character cutoff';
     const { container } = render(<SessionListItem {...baseProps} title={long} />);
     const titleEl = container.querySelector('.session-list-item-title');
     expect(titleEl?.getAttribute('title')).toBe(long);
   });
 
-  it('exposes the full name in title for a short name (could still be CSS-clipped in a narrow pane)', () => {
+  it('sets no title on a short name that fits (no redundant tooltip)', () => {
     const short = 'Short name';
     const { container } = render(<SessionListItem {...baseProps} title={short} />);
     const titleEl = container.querySelector('.session-list-item-title');
-    expect(titleEl?.getAttribute('title')).toBe(short);
+    expect(titleEl?.getAttribute('title')).toBeNull();
   });
 
-  // The native title is not a keyboard/touch affordance, so the row's
-  // accessible name must carry the full (untruncated) title too, or two
-  // sessions sharing the first 40 chars are indistinguishable to a screen reader.
-  it('uses the full name in the row aria-label, not the truncated form', () => {
-    const long = 'A very long session name that runs well past the forty character cutoff';
+  it('exposes the full name when a short name is visually clipped (overflow)', () => {
+    const mid = 'Mid length session name';
+    const { container } = render(<SessionListItem {...baseProps} title={mid} />);
+    const titleEl = container.querySelector('.session-list-item-title') as HTMLElement;
+    expect(titleEl.getAttribute('title')).toBeNull(); // fits initially (jsdom 0x0)
+    Object.defineProperty(titleEl, 'scrollWidth', { configurable: true, value: 300 });
+    Object.defineProperty(titleEl, 'clientWidth', { configurable: true, value: 100 });
+    act(() => { resizeCb?.(); });
+    expect(titleEl.getAttribute('title')).toBe(mid);
+  });
+
+  // The native title is not a keyboard/touch affordance, so the row's accessible
+  // name must carry the full title regardless, or two sessions sharing the first
+  // 40 chars are indistinguishable to a screen reader.
+  it('always uses the full name in the row aria-label, not the truncated form', () => {
     const { container } = render(<SessionListItem {...baseProps} title={long} />);
     const row = container.querySelector('[aria-label^="Session: "]');
     expect(row?.getAttribute('aria-label')).toContain(long);

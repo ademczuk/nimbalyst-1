@@ -388,6 +388,24 @@ export const SessionListItem = memo<SessionListItemProps>(({
     ? displayTitle.substring(0, 40) + '...'
     : displayTitle;
 
+  // Expose the full name in a hover title only when it is actually hidden:
+  // either JS-truncated past 40 chars, or visually clipped by the row's
+  // text-ellipsis in a narrow pane. This avoids a redundant tooltip on names
+  // that already fit, in a list users traverse by hovering.
+  const titleRef = useRef<HTMLDivElement>(null);
+  const [isTitleClipped, setIsTitleClipped] = useState(false);
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) { return; }
+    const measure = () => setIsTitleClipped(el.scrollWidth > el.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') { return; }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [truncatedTitle]);
+  const showFullName = displayTitle.length > 40 || isTitleClipped;
+
   // Per-session live activity. Bumped on every `ai:message-logged`; only
   // this list item re-renders when its own activity ticks, instead of the
   // whole SessionHistory + 705 siblings. Fall back to the registry's
@@ -512,7 +530,7 @@ export const SessionListItem = memo<SessionListItemProps>(({
           />
         ) : (
           <>
-            <div title={displayTitle} className={`session-list-item-title text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap mb-0.5 transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}>{truncatedTitle}</div>
+            <div ref={titleRef} title={showFullName ? displayTitle : undefined} className={`session-list-item-title text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap mb-0.5 transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}>{truncatedTitle}</div>
             <div className="session-list-item-meta flex gap-1.5 text-[0.6875rem] text-[var(--nim-text-faint)] items-center mt-0.5">
               <span className="session-list-item-datetime text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap transition-colors duration-150" title={fullDateTime}>{relativeTime}</span>
               {displayModel && <span className="session-list-item-model overflow-hidden text-ellipsis whitespace-nowrap">{displayModel}</span>}
