@@ -2,6 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
+    branches: [main]
     types: [opened, synchronize, ready_for_review, reopened]
     # Scope to code paths so docs/markdown-only PRs do not spend the token.
     paths:
@@ -12,15 +13,25 @@ on:
 
 jobs:
   claude-review:
-    # Actor gate: only review the fork owner's own feature PRs. External-fork PRs
-    # to a public repo run with no secrets anyway, but this blocks them explicitly.
-    if: github.event.pull_request.user.login == 'ademczuk'
+    # Actor gate: only review the fork owner's own same-repo feature PRs into main,
+    # and only once ready. CI auto-review skips drafts by design, so use @claude on a
+    # draft for early per-push feedback. External-fork PRs to a public repo get no
+    # secrets anyway, but this blocks them explicitly and avoids wasted token spend.
+    if: |
+      github.event.pull_request.user.login == 'ademczuk' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.draft == false
+
+    # Cancel an in-flight review when a newer commit is pushed to the same PR.
+    concurrency:
+      group: claude-code-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
 
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
+      pull-requests: write
       id-token: write
 
     steps:
@@ -36,7 +47,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # --comment posts the review to the PR. Without it /code-review is terminal-only.
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
