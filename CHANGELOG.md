@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Contextual tips now fill empty AI sessions immediately and on every empty session, instead of after a delay and only once per app launch.
 
 ### Fixed
+- Gemini (Antigravity) agent and meta-agent turns no longer come back empty after the agent runs a tool that returns no results.
 - Restarting the app no longer occasionally loses your open project windows and drops you back on the Workspace Manager.
 - The Claude Code context indicator now updates throughout a turn instead of only at the end, and no longer bounces when sub-agents run.
 - Personal docs sync no longer overwrites newer local edits (or an open editor's unsaved changes) with an older synced copy.
