@@ -16,6 +16,7 @@ import {
   DEFAULT_MODELS,
   normalizeClaudeCodeVariant,
 } from '../modelConstants';
+import { ProviderRegistry } from './ProviderRegistry';
 
 /**
  * Valid Claude Code model suffixes (e.g., -1m for 1M context window)
@@ -144,9 +145,15 @@ export class ModelIdentifier {
    */
   static create(provider: AIProviderType, model: string): ModelIdentifier {
     // Validate provider. Extension-contributed providers are valid at runtime
-    // once registered via registerExtensionProvider, even though they are not
-    // in the static AI_PROVIDER_TYPES union.
-    if (!AI_PROVIDER_TYPES.includes(provider) && !ModelIdentifier.EXTENSION_PROVIDERS.has(provider)) {
+    // once registered (via registerExtensionProvider into EXTENSION_PROVIDERS,
+    // or known to the ProviderRegistry), even though they are not in the static
+    // AI_PROVIDER_TYPES union. The hardcoded list remains the fallback when the
+    // registry is empty.
+    if (
+      !AI_PROVIDER_TYPES.includes(provider) &&
+      !ModelIdentifier.EXTENSION_PROVIDERS.has(provider) &&
+      !ProviderRegistry.has(provider)
+    ) {
       throw new Error(`Invalid provider: ${provider}`);
     }
 
@@ -209,7 +216,7 @@ export class ModelIdentifier {
    * (providers that support MCP and file system tools).
    */
   isAgentProvider(): boolean {
-    return this.provider === 'claude-code' || this.provider === 'openai-codex';
+    return ProviderRegistry.isAgent(this.provider) || this.provider === 'claude-code' || this.provider === 'openai-codex' || this.provider === 'openai-codex-acp' || this.provider === 'opencode' || this.provider === 'copilot-cli' || this.provider === 'gemini-cli';
   }
 
   /**

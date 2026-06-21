@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
 
 export interface AgentModelOption {
@@ -21,6 +22,7 @@ const providerLabels: Record<string, string> = {
   'claude-code-cli': 'Claude Code CLI',
   'openai-codex': 'OpenAI Codex',
   'openai-codex-acp': 'OpenAI Codex (ACP)',
+  'gemini-cli': 'Google Gemini',
 };
 
 function getModelLabel(model: AgentModelOption): string {
@@ -69,7 +71,7 @@ export function AgentModelPicker({
           <option value="">No agent models available</option>
         )}
         {!isLoading && hasModels && Object.entries(groupedModels).map(([provider, providerModels]) => (
-          <optgroup key={provider} label={providerLabels[provider] || provider}>
+          <optgroup key={provider} label={ProviderRegistry.get(provider)?.label || providerLabels[provider] || provider}>
             {providerModels.map((model) => (
               <option key={model.id} value={model.id}>
                 {getModelLabel(model)}

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAtomValue } from 'jotai';
 import { createPortal } from 'react-dom';
-import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol, getProviderIcon, getExtensionLoader } from '@nimbalyst/runtime';
+import { useAlphaFeatures } from '../../hooks/useAlphaFeature';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../common/AlphaBadge';
 import { developerModeAtom } from '../../store/atoms/appSettings';
 
@@ -13,7 +14,20 @@ export type SettingsCategory =
   | 'openai-codex'
   | 'opencode'
   | 'copilot-cli'
+  | 'gemini-cli'
   | 'lmstudio'
+  // antigravity-gemini and antigravity-gemini-agent now ship as a marketplace
+  // extension (`gemini-antigravity`). Their sidebar entries are contributed
+  // dynamically once the extension is installed; the literal IDs are kept here
+  // as a type-level allow-list so legacy code paths (SettingsView, urlState)
+  // still type-check while routing through the registry.
+  | 'antigravity-gemini'
+  | 'antigravity-gemini-agent'
+  // kimi-code and kimi-code-agent ship as the `kimi-code` marketplace
+  // extension (Moonshot Kimi K2.6). Same dynamic-sidebar pattern as the
+  // antigravity entries above; IDs listed for the type-level allow-list.
+  | 'kimi-code'
+  | 'kimi-code-agent'
   | 'notifications'
   | 'voice-mode'
   | 'sync'
@@ -67,6 +81,55 @@ interface SettingsSidebarProps {
   onSelectOrg?: (orgId: string) => void;
 }
 
+/**
+ * Extension-contributed provider sidebar entries. Each entry pairs an
+ * extension's AI-provider id (used as the sidebar category id and the
+ * SettingsView panel switch key) with the metadata needed to render it
+ * in the right sidebar group.
+ */
+interface ExtensionProviderSidebarEntry {
+  id: string;
+  label: string;
+  icon: string | undefined;
+  isAgent: boolean;
+  isChat: boolean;
+}
+
+/**
+ * Read extension-contributed AI providers from the extension loader and
+ * subscribe to loader changes so the sidebar updates immediately when the
+ * user installs, uninstalls, enables, or disables an extension. Returns an
+ * empty list when the loader has not been initialized (e.g. on the very
+ * first render before the extension system mounts).
+ */
+function useExtensionProviderSidebarEntries(): ExtensionProviderSidebarEntry[] {
+  const [entries, setEntries] = useState<ExtensionProviderSidebarEntry[]>([]);
+
+  useEffect(() => {
+    const compute = () => {
+      const loader = getExtensionLoader();
+      if (!loader) {
+        setEntries([]);
+        return;
+      }
+      const next: ExtensionProviderSidebarEntry[] = loader.getAiProviders().map(({ contribution }) => ({
+        id: contribution.id,
+        label: contribution.label,
+        icon: contribution.icon,
+        isAgent: contribution.isAgent ?? false,
+        isChat: contribution.isChat ?? false,
+      }));
+      setEntries(next);
+    };
+
+    compute();
+    const loader = getExtensionLoader();
+    return loader?.subscribe(compute);
+  }, []);
+
+  return entries;
+}
+
 export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   selectedCategory,
   onSelectCategory,
@@ -79,6 +142,11 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   // Database panel exposes the PGLite→SQLite migration. Hidden from non-dev
   // users until we finish internal testing with other devs.
   const developerMode = useAtomValue(developerModeAtom);
+  // Alpha feature flags drive Collaboration group visibility only.
+  // Per-feature panels (Voice Mode, OpenCode, Copilot, Agent Features) are always visible
+  // so users can discover and enable them; the panels themselves gate their controls.
+  const alphaFeatures = useAlphaFeatures(['collaboration']);
+  const extensionProviders = useExtensionProviderSidebarEntries();
   const getStatusDot = (providerId: string): 'success' | 'warning' | 'error' | undefined => {
     const status = providerStatus[providerId];
     if (!status) return undefined;
@@ -87,36 +155,30 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
     return undefined;
   };
 
-  // Extension-contributed agent providers from the main-process
-  // AgentProviderRegistry, so installed agent extensions (e.g. the Gemini
-  // Antigravity extension) appear in this list alongside the built-ins.
-  const [extAgentProviders, setExtAgentProviders] = useState<
-    Array<{ id: string; name: string; icon?: string; status: string }>
-  >([]);
-  useEffect(() => {
-    let cancelled = false;
-    const invoke = window.electronAPI?.invoke;
-    if (!invoke) return;
-    invoke('agent-providers:list')
-      .then((res: { success?: boolean; data?: Array<{ id: string; name: string; icon?: string; status: string }> }) => {
-        if (!cancelled && res?.success && Array.isArray(res.data)) {
-          setExtAgentProviders(res.data);
-        }
-      })
-      .catch(() => {
-        /* registry unavailable; show built-ins only */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const extAgentItems: CategoryItem[] = extAgentProviders.map((p) => ({
-    id: p.id,
-    name: p.name,
-    icon: p.icon ? <MaterialSymbol icon={p.icon} size={16} /> : getProviderIcon(p.id, { size: 16 }),
-    statusDot: p.status === 'active' ? 'success' : p.status === 'denied' ? 'error' : undefined,
-    isAlpha: true,
-  }));
+  // Build dynamic sidebar items from extension-contributed providers, split
+  // by whether the provider is an agent or a chat provider. Each item uses
+  // the provider's icon when known and falls back to a smart-toy glyph. The
+  // renderer extension loader surfaces both the agent (e.g.
+  // antigravity-gemini-agent, kimi-code-agent) and chat (antigravity-gemini,
+  // kimi-code, gemini-cli) contributions, so this single source covers what
+  // the old main-process AgentProviderRegistry IPC list did and more.
+  const extensionAgentItems: CategoryItem[] = extensionProviders
+    .filter((entry) => entry.isAgent)
+    .map((entry) => ({
+      id: entry.id as SettingsCategory,
+      name: entry.label,
+      icon: <MaterialSymbol icon={entry.icon || 'smart_toy'} size={16} />,
+      statusDot: getStatusDot(entry.id),
+      isAlpha: true,
+    }));
+  const extensionChatItems: CategoryItem[] = extensionProviders
+    .filter((entry) => entry.isChat)
+    .map((entry) => ({
+      id: entry.id as SettingsCategory,
+      name: entry.label,
+      icon: <MaterialSymbol icon={entry.icon || 'smart_toy'} size={16} />,
+      statusDot: getStatusDot(entry.id),
+    }));
 
   const categoryGroups: CategoryGroup[] = [
     {
@@ -209,7 +271,12 @@ Best for complex coding tasks.`,
           statusDot: getStatusDot('copilot-cli'),
           isAlpha: true,
         },
-        ...extAgentItems,
+        // Extension-contributed agent providers appear here once the user
+        // installs the contributing extension (e.g. gemini-antigravity
+        // contributes `antigravity-gemini-agent`). The list is empty by
+        // default; the sidebar re-renders when the extension loader fires
+        // a change event.
+        ...extensionAgentItems,
       ],
     },
     {
@@ -238,10 +305,10 @@ Best for quick edits and tasks that do not require multi-file operations.`,
           icon: getProviderIcon('lmstudio', { size: 16 }),
           statusDot: getStatusDot('lmstudio'),
         },
-        // Extension agent providers (e.g. Gemini) are also surfaced under Chat
-        // Providers per product request; selection routes through the same
-        // extension-agent backend.
-        ...extAgentItems,
+        // Extension-contributed chat providers appear here once the user
+        // installs the contributing extension (e.g. gemini-antigravity
+        // contributes `antigravity-gemini`).
+        ...extensionChatItems,
       ],
     },
     {

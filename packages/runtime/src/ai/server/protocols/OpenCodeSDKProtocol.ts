@@ -143,6 +143,12 @@ class OpenCodeServerManager {
       ...(env || {}),
     };
 
+    // Windows: a bare command name spawned without `shell: true` resolves only
+    // executables on PATH, not the `.cmd`/`.bat` shims npm-global CLIs install,
+    // so `spawn('opencode', ...)` throws ENOENT. Spawning under a shell lets the
+    // shim resolve via PATH. POSIX keeps shell:false (the command string itself
+    // is unchanged on every platform).
+    const isWin = process.platform === 'win32';
     this.serverProcess = spawn('opencode', [
       'serve',
       '--port', String(this.port),
@@ -151,6 +157,8 @@ class OpenCodeServerManager {
       cwd: this.workspacePath,
       env: serverEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: isWin,
+      windowsHide: true,
     });
 
     this.serverProcess.on('error', (error) => {

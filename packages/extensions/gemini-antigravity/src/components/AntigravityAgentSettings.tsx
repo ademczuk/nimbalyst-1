@@ -6,23 +6,10 @@
  * AntigravityUsageIndicator floating in the bottom-left navigation gutter,
  * matching the Codex Usage chip pattern. This panel is focused on
  * connection / enable / model selection only.
- *
- * Phase 5: PRE-CONSENT branch. When the backend module is not enabled
- * (first-use case), render an explicit native-code grant banner instead
- * of the usual config UI. The single "Enable provider" button kicks off
- * the host-mediated consent flow that grants:
- *   - the native-code execution capability (utilityProcess.fork)
- *   - the one catalog permission this extension declares
- *     (nimbalyst-database-write)
- * Once the backend module is enabled, fall through to the existing
- * usage / quota / connection / models UI plus the version-gate error
- * display.
  */
 
 import React from 'react';
-// Provider class moved into the backend module (dist/agent.js) per Phase 5
-// reshape. Model discovery is static, declared in manifest.json. The host
-// passes availableModels via props.
+import { AntigravityAgentProvider } from '../AntigravityAgentProvider';
 
 interface Model {
   id: string;
@@ -35,15 +22,6 @@ interface ProviderConfig {
   testStatus?: 'idle' | 'testing' | 'success' | 'error';
   testMessage?: string;
   models?: string[];
-  /**
-   * True once the user has granted the native-code + catalog-permission
-   * bundle for this extension's backend module. False / undefined means
-   * the pre-consent banner should be shown instead of the usual UI.
-   *
-   * Sourced from the extension manifest broker state; the host writes it
-   * back after a successful consent grant.
-   */
-  backendModuleEnabled?: boolean;
 }
 
 export interface AntigravityAgentSettingsProps {
@@ -57,43 +35,6 @@ export interface AntigravityAgentSettingsProps {
   onSelectAllModels: (selectAll: boolean) => void;
   onTestConnection: () => Promise<void>;
   onConfigChange?: (updates: Partial<ProviderConfig>) => void;
-  /**
-   * Triggers the host-mediated first-use consent flow that grants the
-   * native-code execution capability + the nimbalyst-database-write
-   * catalog permission, then flips backendModuleEnabled to true.
-   *
-   * Optional so existing call sites that haven't been migrated to the
-   * Phase 5 prop set keep compiling -- the consent button is hidden
-   * when this prop is absent (defensive UX rather than silently no-op).
-   */
-  onEnableBackendModule?: () => Promise<void>;
-}
-
-/**
- * iOS-style slider switch, markup-identical to the host SettingsToggle so the
- * Gemini provider's enable control matches the built-in providers (Claude etc.).
- */
-function ToggleSwitch({
-  checked,
-  onChange,
-  disabled,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  disabled?: boolean;
-}): React.ReactElement {
-  return (
-    <label className={`relative inline-block w-11 h-6 shrink-0 ${disabled ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        disabled={disabled}
-        className="hidden peer"
-      />
-      <span className="absolute cursor-pointer inset-0 rounded-full transition-all bg-[var(--nim-bg-tertiary)] before:absolute before:content-[''] before:h-5 before:w-5 before:left-0.5 before:bottom-0.5 before:rounded-full before:transition-all before:bg-white before:shadow-sm peer-checked:bg-[var(--nim-primary)] peer-checked:before:translate-x-5" />
-    </label>
-  );
 }
 
 export function AntigravityAgentSettings({
@@ -104,7 +45,6 @@ export function AntigravityAgentSettings({
   onModelToggle,
   onSelectAllModels,
   onTestConnection,
-  onEnableBackendModule,
 }: AntigravityAgentSettingsProps): React.ReactElement {
   const enabledModelIds = config.models ?? [];
   const allSelected = availableModels.length > 0
@@ -129,10 +69,12 @@ export function AntigravityAgentSettings({
 
     if (!shouldProbe) return;
 
-    // Model discovery is now static (manifest.aiAgentProviders[0].models).
-    // The host passes availableModels via props; no runtime probe is needed.
-    // Clear any stale error state from a previous transition.
-    setModelsError(null);
+    AntigravityAgentProvider.getModels().then(() => {
+      setModelsError(null);
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setModelsError(msg);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.enabled, availableModels.length, loading]);
 
@@ -152,112 +94,6 @@ export function AntigravityAgentSettings({
     }
   }, [config.enabled, config.models, availableModels.length, onSelectAllModels]);
 
-  // Pre-consent state machine for the Enable-provider button. Disables
-  // the button while the grant flow is in-flight and surfaces the
-  // failure inline (e.g. user cancelled the consent dialog, or the host
-  // rejected the catalog permission).
-  const [consentInFlight, setConsentInFlight] = React.useState(false);
-  const [consentError, setConsentError] = React.useState<string | null>(null);
-
-  const handleEnableBackendModule = React.useCallback(async () => {
-    if (!onEnableBackendModule) return;
-    setConsentInFlight(true);
-    setConsentError(null);
-    try {
-      await onEnableBackendModule();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setConsentError(msg);
-    } finally {
-      setConsentInFlight(false);
-    }
-  }, [onEnableBackendModule]);
-
-  // PRE-CONSENT BRANCH: backend module not yet enabled. Render the
-  // native-code grant banner + single Enable-provider button and bail
-  // before the usual config UI. This is the first-use case.
-  if (!config.backendModuleEnabled) {
-    return (
-      <div
-        className="provider-panel antigravity-agent-panel antigravity-agent-preconsent flex flex-col"
-        data-testid="antigravity-agent-settings"
-      >
-        <div className="antigravity-main-column flex-1 flex flex-col">
-          <div className="provider-panel-header mb-4 pb-4 border-b border-[var(--nim-border)]">
-            <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-2 text-[var(--nim-text)]">
-              Gemini 3.5 Flash (Agent)
-            </h3>
-            <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-              Agent provider that runs a Nimbalyst-orchestrated tool loop
-              over Gemini 3.5 Flash. Auth uses your existing ~/.gemini
-              login.
-            </p>
-          </div>
-
-          <div
-            className="antigravity-preconsent-banner p-4 mb-4 rounded-md border border-[var(--nim-warning)] bg-[var(--nim-bg-secondary)]"
-            data-testid="antigravity-agent-preconsent-banner"
-          >
-            <h4 className="text-base font-semibold text-[var(--nim-text)] mb-2">
-              Native code grant required
-            </h4>
-            <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-              This provider ships a backend module that Nimbalyst runs
-              in an isolated <code>utilityProcess</code>. Enabling it
-              grants the extension permission to execute native code on
-              your machine.
-            </p>
-            <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-              The extension also requests one catalog permission:
-            </p>
-            <ul className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3 ml-5 list-disc">
-              <li>
-                <code>nimbalyst-database-write</code> - persist agent
-                transcripts and tool-call records to the local Nimbalyst
-                database.
-              </li>
-            </ul>
-            <p className="text-[12px] leading-relaxed text-[var(--nim-text-muted)] mb-4">
-              You can revoke either grant later from Settings &gt;
-              Extensions. The backend module won&apos;t start until you
-              click Enable provider below.
-            </p>
-
-            {consentError && (
-              <p
-                className="text-[13px] text-[var(--nim-error)] mb-3"
-                data-testid="antigravity-agent-preconsent-error"
-              >
-                {consentError}
-              </p>
-            )}
-
-            {onEnableBackendModule ? (
-              <button
-                type="button"
-                onClick={() => { void handleEnableBackendModule(); }}
-                disabled={consentInFlight}
-                className="provider-test-button py-2 px-4 rounded-md text-sm font-medium cursor-pointer transition-all bg-[var(--nim-primary)] text-white border border-[var(--nim-primary)] hover:opacity-90 disabled:opacity-50"
-                data-testid="antigravity-agent-enable-backend-module"
-              >
-                {consentInFlight ? 'Requesting consent...' : 'Enable provider'}
-              </button>
-            ) : (
-              <p className="text-[12px] text-[var(--nim-text-muted)] italic">
-                Consent flow is unavailable in this host. Update Nimbalyst
-                to the latest version to enable the Antigravity backend
-                module.
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // POST-CONSENT BRANCH: backend module enabled. Render the existing
-  // usage / quota / connection / models UI plus the version-gate error
-  // display.
   return (
     <div className="provider-panel antigravity-agent-panel flex flex-col" data-testid="antigravity-agent-settings">
       <div className="antigravity-main-column flex-1 flex flex-col">
@@ -312,11 +148,17 @@ export function AntigravityAgentSettings({
           )}
         </div>
 
-        <div className="provider-enable provider-panel-section flex items-center justify-between gap-4 py-4 mb-4 border-b border-[var(--nim-border)]">
-          <span className="provider-enable-label text-sm font-medium text-[var(--nim-text)]">
+        <div className="provider-panel-section py-3 mb-4 border-b border-[var(--nim-border)] flex items-center justify-between">
+          <label htmlFor="agy-agent-enable" className="text-sm font-medium text-[var(--nim-text)]">
             Enable Gemini 3.5 Flash (Agent)
-          </span>
-          <ToggleSwitch checked={config.enabled || false} onChange={onToggle} />
+          </label>
+          <input
+            id="agy-agent-enable"
+            type="checkbox"
+            checked={config.enabled || false}
+            onChange={(e) => onToggle(e.target.checked)}
+            className="cursor-pointer"
+          />
         </div>
 
         {config.enabled && (
@@ -343,10 +185,7 @@ export function AntigravityAgentSettings({
               {availableModels.length === 0 ? (
                 <>
                   {modelsError && !loading && (
-                    <p
-                      className="text-[13px] text-[var(--nim-error)] mb-2"
-                      data-testid="antigravity-agent-models-error"
-                    >
+                    <p className="text-[13px] text-[var(--nim-error)] mb-2">
                       {modelsError}
                     </p>
                   )}

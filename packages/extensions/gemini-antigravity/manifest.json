@@ -2,12 +2,45 @@
   "id": "gemini-antigravity",
   "name": "Google Gemini (Antigravity)",
   "version": "1.0.0",
-  "description": "Google Gemini 3.5 Flash via the Antigravity language server. Auth rides your existing ~/.gemini login.",
+  "description": "Google Gemini 3.5 Flash via the Antigravity language server. Auth rides your existing ~/.gemini login. Both chat and agent providers.",
   "author": "Nimbalyst",
   "main": "dist/index.js",
   "apiVersion": "1.0.0",
   "defaultEnabled": true,
+  "permissions": {
+    "process": true,
+    "network": true,
+    "filesystem": true
+  },
   "contributions": {
+    "aiProviders": [
+      {
+        "id": "antigravity-gemini",
+        "label": "Gemini 3.5 Flash (Antigravity)",
+        "component": "AntigravityProvider",
+        "isAgent": false,
+        "isChat": true,
+        "requiresApiKey": false,
+        "dynamicModels": false,
+        "transcriptParser": "claude-code",
+        "defaultModelId": "antigravity-gemini:gemini-3-flash-agent",
+        "icon": "gemini",
+        "settingsPanelComponent": "AntigravitySettings"
+      },
+      {
+        "id": "antigravity-gemini-agent",
+        "label": "Gemini 3.5 Flash (Agent)",
+        "component": "AntigravityAgentProvider",
+        "isAgent": true,
+        "isChat": false,
+        "requiresApiKey": false,
+        "dynamicModels": false,
+        "transcriptParser": "claude-code",
+        "defaultModelId": "antigravity-gemini-agent:gemini-3-flash-agent",
+        "icon": "gemini",
+        "settingsPanelComponent": "AntigravityAgentSettings"
+      }
+    ],
     "aiAgentProviders": [
       {
         "id": "antigravity-gemini-agent",
@@ -74,12 +107,13 @@
       "google",
       "ai",
       "antigravity",
-      "agent"
+      "agent",
+      "chat"
     ],
-    "icon": "auto_awesome",
+    "icon": "gemini",
     "featured": true,
     "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",
-    "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Agent provider with tool-loop support. Authentication uses your existing ~/.gemini OAuth login - no API key required. Tracks per-model quota and account credits so you can avoid rate limits.",
+    "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Includes both a chat provider for one-shot prompts and an agent provider with tool-loop support. Authentication uses your existing ~/.gemini OAuth login - no API key required. Tracks per-model quota and account credits so you can avoid rate limits.",
     "highlights": [
       "Gemini 3.5 Flash (High / Medium / Low) via the local Antigravity language server",
       "Agent provider with tool-loop and meta-agent mode",

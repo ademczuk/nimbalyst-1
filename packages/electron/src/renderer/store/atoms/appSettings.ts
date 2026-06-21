@@ -25,6 +25,8 @@ import { BetaFeatureTag } from '../../../shared/betaFeatures';
 import { DeveloperFeatureTag, DEVELOPER_FEATURES, getDefaultDeveloperFeatures, enableAllDeveloperFeatures, disableAllDeveloperFeatures, areAllDeveloperFeaturesEnabled } from '../../../shared/developerFeatures';
 import { normalizeCodexProviderConfig, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { onSettingChanged } from './settingAtomFamily';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
+import { registerBuiltinProviderMetadata } from '@nimbalyst/runtime/ai/server/registerBuiltinProviderMetadata';
 
 // Voice type - all available OpenAI Realtime voices
 export type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
@@ -1103,22 +1105,58 @@ export interface AIProviderSettings {
   availableModels: Record<string, AIModel[]>;
 }
 
+// Register built-in provider metadata once so the registry can supply defaults
+// for any provider id (built-in or extension-contributed) not covered by the
+// static maps below. Idempotent; the renderer entry point also calls this.
+registerBuiltinProviderMetadata();
+
 /**
  * Default provider configurations.
+ *
+ * Static built-in entries are authoritative and kept as-is. Registry-derived
+ * defaults are then merged on top so any provider id present in the registry
+ * (including extension-contributed ones) but missing here gets a sane default.
  */
+// All built-in providers default to enabled on fresh install. Per-provider
+// auth, install, or connection state is still surfaced in the panel -- this
+// only controls whether the provider entry appears in the model picker.
+// IMPORTANT: persisted user settings are merged ON TOP of these defaults by
+// initAIProviderSettings(), so flipping a default from false to true does
+// NOT overwrite a user's existing stored choice (their stored `enabled: false`
+// still wins on the next load).
 const defaultProviders: Record<string, ProviderConfig> = {
-  claude: { enabled: false, testStatus: 'idle' },
+  claude: { enabled: true, testStatus: 'idle' },
   'claude-code': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
-  openai: { enabled: false, testStatus: 'idle' },
-  'openai-codex': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  'openai-codex-acp': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  opencode: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  'copilot-cli': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
-  lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
+  openai: { enabled: true, testStatus: 'idle' },
+  'openai-codex': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  'openai-codex-acp': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  opencode: { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  'copilot-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  // gemini-cli ships as a marketplace extension; we still seed a default here so
+  // that initAIProviderSettings() (which runs before the extension system loads)
+  // doesn't drop a user's persisted choice when the extension is enabled, and so
+  // fresh installs see it enabled in the model picker once the extension hydrates.
+  'gemini-cli': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  lmstudio: { enabled: true, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
+  // antigravity-gemini and antigravity-gemini-agent ship as a marketplace
+  // extension (`gemini-antigravity`). They get their defaults from the
+  // descriptor that the extension registers via aiProviders contribution,
+  // and the ProviderRegistry.list() loop below catches them once the
+  // extension system hydrates. We intentionally do NOT seed defaults here.
 };
+
+for (const descriptor of ProviderRegistry.list()) {
+  if (!defaultProviders[descriptor.id]) {
+    defaultProviders[descriptor.id] = { enabled: true, testStatus: 'idle', installStatus: 'not-installed' };
+  }
+}
 
 /**
  * Default API keys.
+ *
+ * Static built-in keys are kept as-is. For any registry provider that declares
+ * an `apiKeyName`/`baseUrlName` not already covered, add an empty default so a
+ * new/extension provider has a place to store its key without breaking built-ins.
  */
 const defaultApiKeys: Record<string, string> = {
   anthropic: '',
@@ -1128,6 +1166,15 @@ const defaultApiKeys: Record<string, string> = {
   opencode: '',
   lmstudio_url: 'http://127.0.0.1:8234',
 };
+
+for (const descriptor of ProviderRegistry.list()) {
+  if (descriptor.apiKeyName && !(descriptor.apiKeyName in defaultApiKeys)) {
+    defaultApiKeys[descriptor.apiKeyName] = '';
+  }
+  if (descriptor.baseUrlName && !(descriptor.baseUrlName in defaultApiKeys)) {
+    defaultApiKeys[descriptor.baseUrlName] = '';
+  }
+}
 
 /**
  * Default AI provider settings.
@@ -1471,18 +1518,36 @@ export async function initAIProviderSettings(): Promise<AIProviderSettings> {
   const providers = { ...defaultProviders };
   const apiKeys = { ...defaultApiKeys };
 
-  // Merge loaded provider settings. Built-in providers are seeded from
-  // defaultProviders; extension-contributed agent providers (e.g.
-  // antigravity-gemini-agent) are not, so without the else branch their
-  // persisted enabled/models state would be silently dropped at hydration and
-  // their settings panel would always render as disabled.
+  // Merge loaded provider settings. CRITICAL: accept ANY key from the disk,
+  // not just keys present in `defaultProviders`. Extension-contributed providers
+  // (gemini-cli, antigravity-gemini, antigravity-gemini-agent, kimi-code) live in
+  // the store after their extension activates via aiSaveSettings, but they are NOT
+  // in `defaultProviders` (which only seeds built-ins). The previous
+  // `if (providers[key])` guard silently dropped them every time this function
+  // ran, including on each `ai-settings:changed` broadcast from main, so the
+  // atom kept reverting to enabled:false for those providers even though the
+  // disk had enabled:true. That made the Settings toggle visually unstick and
+  // the AntigravityUsageIndicator stay hidden (CLA-185 root cause).
   if (settings?.providerSettings) {
     Object.entries(settings.providerSettings).forEach(([key, value]: [string, any]) => {
-      if (providers[key]) {
-        providers[key] = { ...providers[key], ...value };
-      } else {
-        providers[key] = { enabled: false, testStatus: 'idle', ...value };
-      }
+      // ProviderConfig.models is `string[]` (array of model IDs the user
+      // enabled), not an object. Using an object default here was the cause
+      // of "m.includes is not a function" because downstream panels do
+      // `config.models?.includes(model.id)`. Default to undefined for the
+      // optional fields; the disk value (if any) is merged on top.
+      const base = providers[key] ?? { enabled: false, testStatus: 'idle' as const };
+      // Validate the disk shape before spreading. A corrupted or hand-edited
+      // settings file could carry `models: "some-string"` or `models: {}` and
+      // crash every downstream `.includes()` call. Normalize at the boundary.
+      const validated = value && typeof value === 'object'
+        ? {
+            ...value,
+            ...(value.models !== undefined && !Array.isArray(value.models)
+              ? { models: undefined }
+              : {}),
+          }
+        : {};
+      providers[key] = { ...base, ...validated };
     });
   }
 

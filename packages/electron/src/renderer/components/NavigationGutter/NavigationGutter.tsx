@@ -13,6 +13,8 @@ import { ExtensionDevIndicator } from '../ExtensionDevIndicator';
 import { ClaudeUsageIndicator } from '../ClaudeUsageIndicator';
 import { CodexUsageIndicator } from '../CodexUsageIndicator';
 import { GeminiUsageIndicator } from '../GeminiUsageIndicator';
+import { AntigravityUsageIndicator } from '../AntigravityUsageIndicator';
+import { KimiUsageIndicator } from '../KimiUsageIndicator';
 import { BackgroundTaskIndicator } from '../BackgroundTaskIndicator';
 import { VoiceModeButton } from '../UnifiedAI/VoiceModeButton';
 import { useExtensionGutterButtons, useExtensionBottomPanelButtons } from '../../extensions/panels/usePanels';
@@ -620,6 +622,28 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
         {!isHidden('gemini-usage') && (
           <div onContextMenu={(e) => openContextMenu(e, 'gemini-usage')}>
             <GeminiUsageIndicator />
+          </div>
+        )}
+
+        {/* Antigravity Usage Indicator - Shows remaining account credits when
+            the gemini-antigravity extension's providers are enabled. The
+            chip itself returns null when neither antigravity-gemini nor
+            antigravity-gemini-agent is currently enabled. */}
+        {!isHidden('antigravity-usage') && (
+          <div onContextMenu={(e) => openContextMenu(e, 'antigravity-usage')}>
+            <AntigravityUsageIndicator />
+          </div>
+        )}
+
+        {/* Kimi (Kimi Code) auth-status chip. Shows the local OAuth state
+            from ~/.kimi/credentials/kimi-code.json - the Kimi Code endpoint
+            does not expose credits, so unlike the Antigravity / Codex chips
+            this one is status-only (green / yellow / muted dot). The chip
+            returns null when neither kimi-code nor kimi-code-agent is
+            currently enabled. */}
+        {!isHidden('kimi-usage') && (
+          <div onContextMenu={(e) => openContextMenu(e, 'kimi-usage')}>
+            <KimiUsageIndicator onOpenSettings={onOpenSettings} />
           </div>
         )}
 

@@ -20,6 +20,9 @@ import {
   setOffscreenMountCallback,
   setEnsureEditorCallback,
 } from '@nimbalyst/runtime';
+import { ProviderRegistry, type ProviderDescriptor } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
+import { bumpExtensionProviderRegistryVersion } from '../store/atoms/extensionProviderRegistry';
+import { initializeExtensionProviderTurnBridge } from './extensionProviderTurnBridge';
 import { ExtensionPlatformServiceImpl } from '../services/ExtensionPlatformServiceImpl';
 import { initializeExtensionEditorBridge } from '../extensions/ExtensionEditorBridge';
 import { initializeExtensionPluginBridge } from '../extensions/ExtensionPluginBridge';
@@ -122,6 +125,17 @@ function setupExtensionDevListeners(): void {
         // But we'll call them explicitly to ensure the bridges are updated
         syncExtensionEditors();
         syncExtensionDocumentHeaders();
+        // CRITICAL: a marketplace install fires dev-reload, but
+        // initializeAiProviderBridge() only ran at app startup. Without re-
+        // running it here, the extension's aiProviders contributions never
+        // land in ProviderRegistry (renderer or main), so ai:sendMessage with
+        // the contributed provider id throws "Unknown provider: <id>". Re-run
+        // the bridge so newly-installed providers register immediately.
+        // AWAIT so main has the descriptor before any user action can fire
+        // ai:sendMessage / ai:testConnection -- without the await, the auto-
+        // test queued from the extension's activate() can land before main's
+        // registry has the descriptor and falsely report "Unknown provider".
+        await initializeAiProviderBridge();
       } else {
         console.error(`[ExtensionSystem] Failed to reload extension ${data.extensionId}: ${result.error}`);
       }
@@ -136,11 +150,54 @@ function setupExtensionDevListeners(): void {
 
     try {
       const loader = getExtensionLoader();
+      // Find which provider ids belong to this extension BEFORE unload, so
+      // we can unregister them from both registries afterward. The loader's
+      // getAiProviders() returns [] for unloaded extensions, so we must
+      // capture this snapshot first.
+      const aiProviderIds = loader
+        .getAiProviders()
+        .filter((entry) => entry.extensionId === data.extensionId)
+        .map((entry) => entry.contribution.id);
+
       await loader.unloadExtension(data.extensionId);
       console.log(`[ExtensionSystem] Successfully unloaded extension ${data.extensionId}`);
       // The ExtensionLoader notifies listeners, which triggers sync functions
       syncExtensionEditors();
       syncExtensionDocumentHeaders();
+
+      // Unregister any AI provider descriptors this extension contributed,
+      // in both renderer and main registries. Without this, an uninstalled
+      // extension's provider id stays in ProviderRegistry forever and the
+      // session loop will try to construct an ExtensionProviderProxy that
+      // has no live renderer impl to delegate turns to.
+      //
+      // Intentionally does NOT prune ai-settings.providerSettings here.
+      // Three call sites trigger this dev-unload broadcast and only one of
+      // them is a real uninstall:
+      //   1. ExtensionMarketplaceHandlers uninstallExtension(): prunes
+      //      ai-settings in MAIN before broadcasting (see
+      //      pruneAiSettingsProviders helper). Doing it again here would be
+      //      redundant.
+      //   2. ExtensionDevService file-watcher hot-reload: a reload, not an
+      //      uninstall. Pruning would wipe the user's model toggles every
+      //      time they touch a source file in dev mode.
+      //   3. ExtensionHandlers extensions:dev-unload IPC: dev tooling that
+      //      force-unloads in-memory state without removing on-disk files.
+      //      Pruning would surprise the developer.
+      if (aiProviderIds.length > 0) {
+        for (const id of aiProviderIds) {
+          ProviderRegistry.unregister(id);
+          void window.electronAPI.invoke('ext-provider:unregister', id);
+        }
+        // Notify Jotai-reactive atoms (e.g. AntigravityUsageIndicator's
+        // visibility atom) that the registry shape changed. Without this the
+        // chip / model picker entries linger after uninstall because their
+        // derived atoms never re-run (Bug L).
+        bumpExtensionProviderRegistryVersion();
+        console.log(
+          `[ExtensionSystem] Unregistered ${aiProviderIds.length} AI provider(s) for ${data.extensionId}: ${aiProviderIds.join(', ')}`,
+        );
+      }
     } catch (error) {
       console.error(`[ExtensionSystem] Error unloading extension ${data.extensionId}:`, error);
     }
@@ -623,6 +680,140 @@ export function setExtensionWorkspacePath(workspacePath: string | null): void {
 }
 
 /**
+ * Register extension-contributed AI providers into the runtime
+ * ProviderRegistry as metadata-only descriptors.
+ *
+ * This mirrors `registerBuiltinProviderMetadata()` for built-ins: it only
+ * registers the renderer-safe descriptor fields (label, icon, isAgent, etc.)
+ * so the provider shows up in model pickers and chat/agent allowlists. The
+ * heavy factories (createInstance/getModels) live in the main process and are
+ * wired by a separate stream; they are intentionally omitted here.
+ *
+ * Returns a Promise that resolves once main has acknowledged every
+ * ext-provider:register IPC. Callers that drive a marketplace install flow
+ * SHOULD await this before issuing ai:sendMessage / ai:testConnection; a
+ * fire-and-forget caller risks a "Unknown provider: <id>" race where the
+ * user's first action lands before main's registry is populated.
+ */
+export async function initializeAiProviderBridge(): Promise<void> {
+  const loader = getExtensionLoader();
+  const registrations: Promise<unknown>[] = [];
+  for (const { contribution } of loader.getAiProviders()) {
+    const descriptor: ProviderDescriptor = {
+      id: contribution.id,
+      label: contribution.label,
+      source: 'extension',
+      icon: contribution.icon,
+      isAgent: contribution.isAgent ?? false,
+      isChat: contribution.isChat ?? false,
+      requiresApiKey: contribution.requiresApiKey ?? false,
+      dynamicModels: contribution.dynamicModels ?? false,
+      transcriptParser: contribution.transcriptParser ?? 'claude-code',
+      defaultModelId: contribution.defaultModelId ?? '',
+      mcpProviderId: contribution.mcpProviderId,
+    };
+    ProviderRegistry.register(descriptor);
+    // Mirror the descriptor into the MAIN process registry so the session loop
+    // (ProviderFactory.createProvider) can construct an ExtensionProviderProxy
+    // that delegates turns back here. Renderer registers metadata-only; main
+    // attaches the proxy factory.
+    registrations.push(window.electronAPI.invoke('ext-provider:register', descriptor));
+  }
+  await Promise.all(registrations);
+  // Notify Jotai-reactive atoms (e.g. AntigravityUsageIndicator's visibility
+  // atom) that the renderer ProviderRegistry shape changed so install-state
+  // surfaces immediately without a full re-render (Bug L).
+  bumpExtensionProviderRegistryVersion();
+}
+
+/**
+ * Wire a renderer-side listener that answers main's `ext-provider:get-models`
+ * requests for extension-contributed providers.
+ *
+ * ModelRegistry.getAllModels() (in main) iterates ProviderRegistry and calls
+ * each descriptor.getModels(). Extension impls live in the renderer and expose
+ * a static getModels() (see AntigravityProvider.getModels). Main fires this IPC
+ * to round-trip the call here.
+ *
+ * Without this, ai:getAllModels returns [] for extension providers and the
+ * Settings panel shows "No models found" even when the connection is healthy.
+ */
+let extensionProviderModelBridgeWired = false;
+function initializeExtensionProviderModelBridge(): void {
+  if (extensionProviderModelBridgeWired) return;
+  extensionProviderModelBridgeWired = true;
+
+  window.electronAPI.on(
+    'ext-provider:get-models',
+    (payload: { requestId: string; providerId: string }) => {
+      // Diagnostic: confirm the listener fired and which window received it.
+      // Without this log we cannot distinguish "listener not wired" from
+      // "listener fired but extension.getModels() hung" on the main side.
+      console.log(
+        `[ExtensionProviderBridge] ext-provider:get-models received: requestId=${payload?.requestId} providerId=${payload?.providerId} captureMode=${new URLSearchParams(window.location.search).get('mode') === 'capture'}`,
+      );
+      void (async () => {
+        const send = (
+          models: Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }>,
+          error?: string,
+        ) => {
+          try {
+            window.electronAPI.send('ext-provider:get-models:response', {
+              requestId: payload.requestId,
+              models,
+              error,
+            });
+            console.log(
+              `[ExtensionProviderBridge] ext-provider:get-models:response sent: requestId=${payload?.requestId} ${
+                error ? `error="${error}"` : `${models.length} model(s)`
+              }`,
+            );
+          } catch (sendErr) {
+            console.error(
+              `[ExtensionProviderBridge] ext-provider:get-models:response send failed: requestId=${payload?.requestId}`,
+              sendErr,
+            );
+          }
+        };
+
+        try {
+          const loader = getExtensionLoader();
+          const entry = loader
+            .getAiProviders()
+            .find((e) => e.contribution.id === payload.providerId);
+          if (!entry) {
+            send([], `extension provider '${payload.providerId}' not loaded`);
+            return;
+          }
+
+          // The contributed impl can be either:
+          //   (a) a class with a static `getModels()` (AntigravityProvider pattern)
+          //   (b) an instance / module with an instance `getModels()` method
+          // We try the static first so we don't construct the provider for a
+          // simple catalog lookup.
+          const impl = entry.impl as unknown as {
+            getModels?: () => Promise<unknown[]> | unknown[];
+          };
+          if (typeof impl.getModels !== 'function') {
+            send([], `extension provider '${payload.providerId}' does not expose getModels()`);
+            return;
+          }
+
+          const result = await impl.getModels();
+          const models = Array.isArray(result)
+            ? (result as Array<{ id: string; name: string; provider: string; maxTokens?: number; contextWindow?: number }>)
+            : [];
+          send(models);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          send([], msg);
+        }
+      })();
+    },
+  );
+}
+
+/**
  * Register the Extension System with its platform service.
  * Should be called once during app initialization.
  *
@@ -671,6 +862,22 @@ export async function registerExtensionSystem(): Promise<void> {
     // Initialize the theme bridge so extension-contributed themes propagate
     // to the main process for theme:list and active-theme reconciliation.
     initializeExtensionThemeBridge();
+
+    // Register extension-contributed AI providers as metadata-only descriptors
+    // so they appear in the renderer ProviderRegistry (model pickers, allowlists).
+    // Await so the main-side registry is populated before the UI is allowed
+    // to call ai:sendMessage with a contributed provider id.
+    await initializeAiProviderBridge();
+
+    // Wire the renderer half of the extension-provider turn bridge so the
+    // main-process proxy can delegate turns to renderer-resident impls.
+    initializeExtensionProviderTurnBridge();
+
+    // Wire the renderer half of the model-catalog bridge so main-side
+    // ai:getAllModels can ask the renderer for each extension provider's
+    // getModels() result. Without this, ModelRegistry returns [] for extension
+    // providers and the Settings panel shows "No models found".
+    initializeExtensionProviderModelBridge();
 
     // Set up IPC listener for screenshot capture requests
     setupScreenshotIPCListener();

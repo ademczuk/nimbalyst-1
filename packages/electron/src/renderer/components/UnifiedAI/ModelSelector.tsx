@@ -13,6 +13,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
 import { isAgentProvider, shouldBlockStartedSessionProviderSwitch } from '@nimbalyst/runtime/ai/server/types';
+import { ProviderRegistry } from '@nimbalyst/runtime/ai/server/ProviderRegistry';
 import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
 import { providersAtom } from '../../store/atoms/appSettings';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
@@ -21,7 +22,7 @@ import type { SettingsCategory } from '../Settings/SettingsSidebar';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { HelpTooltip } from '../../help';
 
-const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli']);
+const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli', 'gemini-cli']);
 
 interface Model {
   id: string;
@@ -86,6 +87,28 @@ export function ModelSelector({
     setModels({});
   }, [providers]);
 
+  // Eagerly load the model catalog on mount so the closed-button label can
+  // resolve `currentModel` to its friendly display name (e.g. "Gemini 3.5
+  // Flash (High) (Agent)") instead of falling back to the raw key
+  // ("gemini-3-flash-agent"). Without this, Bug K shows up: the chat header
+  // chip displays the bare key for the active model until the user opens the
+  // dropdown (which used to be the only trigger for loadModels), so the
+  // High / Medium / Low tier on antigravity-gemini-agent stayed hidden in the
+  // most prominent place users look for it. Cheap to do: aiGetModels is
+  // cached per-provider in the renderer atom shape and main's ModelRegistry.
+  useEffect(() => {
+    if (Object.keys(models).length === 0) {
+      void loadModels();
+    }
+    // We intentionally only depend on the empty-state guard; the providers
+    // effect above wipes models when settings change so this effect re-runs
+    // on the next render to pick up the new catalog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models]);
+
+  // Outside-click / escape dismissal is handled by floating-ui's `useDismiss`
+  // (configured above), so no manual document mousedown listener is needed here.
+
   // Load models when dropdown opens
   useEffect(() => {
     if (isOpen && Object.keys(models).length === 0) {
@@ -128,6 +151,7 @@ export function ModelSelector({
       case 'opencode':
       case 'copilot-cli':
       case 'lmstudio':
+      case 'gemini-cli':
         return provider;
       case 'openai-codex-acp':
         // Settings still live under the OpenAI Codex panel.
@@ -159,8 +183,32 @@ export function ModelSelector({
     if (currentModel.startsWith('claude-code')) {
       return getClaudeCodeModelLabel(currentModel);
     }
-    const [, ...modelParts] = currentModel.split(':');
-    return modelParts.join(':') || currentModel;
+
+    // Antigravity-aware fallback. The catalog round-trip (aiGetModels) can be
+    // pending the first time the chip renders for a fresh session, and the
+    // raw key ("gemini-3-flash-agent") is meaningless to users. Map the three
+    // surfaced tiers to their tier-aware display names so the header shows the
+    // selected variant immediately (Bug K). Suffix with "(Agent)" for the
+    // agent provider so it matches the dropdown labels.
+    const [providerId, ...modelParts] = currentModel.split(':');
+    const modelKey = modelParts.join(':');
+    if (providerId === 'antigravity-gemini' || providerId === 'antigravity-gemini-agent') {
+      const tierLabel =
+        modelKey === 'gemini-3-flash-agent'
+          ? 'Gemini 3.5 Flash (High)'
+          : modelKey === 'gemini-3.5-flash-low'
+            ? 'Gemini 3.5 Flash (Medium)'
+            : modelKey === 'gemini-3.5-flash-extra-low'
+              ? 'Gemini 3.5 Flash (Low)'
+              : null;
+      if (tierLabel) {
+        return providerId === 'antigravity-gemini-agent'
+          ? `${tierLabel} (Agent)`
+          : tierLabel;
+      }
+    }
+
+    return modelKey || currentModel;
   };
 
   const getProviderLabel = (provider: string) => {
@@ -177,7 +225,13 @@ export function ModelSelector({
       case 'opencode': return 'OpenCode';
       case 'copilot-cli': return 'GitHub Copilot';
       case 'lmstudio': return 'LMStudio';
+      case 'gemini-cli': return 'Google Gemini';
+      // Built-ins above keep their picker-specific labels; the registry covers
+      // any other built-in/extension provider before falling back to a
+      // prettified form of the raw id.
       default: {
+        const fromRegistry = ProviderRegistry.get(provider)?.label;
+        if (fromRegistry) return fromRegistry;
         // Extension-contributed providers carry their contribution id here
         // (e.g. "antigravity-gemini-agent"). Prettify it for the group header
         // rather than showing the raw id; the per-model names already come
@@ -188,25 +242,25 @@ export function ModelSelector({
     }
   };
 
-  // Built-in chat-model providers are a small closed set. Built-in agent CLIs
-  // are matched by isAgentProvider. Anything left over is an extension-
-  // contributed agent provider id (e.g. antigravity-gemini-agent), which we
-  // group under "Agents" so it surfaces the same way Codex / Claude Code do --
-  // without the renderer needing the main-process AgentProviderRegistry.
-  // Extension providers ship a Material icon name in their manifest; prefer it
-  // so the picker header matches the Agent Providers sidebar. Built-ins fall
-  // back to getProviderIcon.
+  // Built-in chat-model providers and extension-contributed agents are grouped
+  // under "Agents" so they surface the same way Codex / Claude Code do, without
+  // the renderer needing the main-process AgentProviderRegistry. Extension
+  // providers ship a Material icon name in their manifest; prefer it so the
+  // picker header matches the Agent Providers sidebar. Built-ins fall back to
+  // getProviderIcon.
   const renderProviderIcon = (provider: string, size: number) => {
     const ext = providerIcons[provider];
     if (ext) return <MaterialSymbol icon={ext} size={size} />;
     return getProviderIcon(provider, { size });
   };
 
-  const CHAT_MODEL_PROVIDERS = new Set(['claude', 'openai', 'lmstudio']);
+  // Prefer the registry; fall back to the runtime helper when metadata has not
+  // been registered yet so behavior is identical either way.
+  const providerIsAgent = (provider: string): boolean =>
+    ProviderRegistry.has(provider) ? ProviderRegistry.isAgent(provider) : isAgentProvider(provider);
+
   const getProviderType = (provider: string): ProviderType => {
-    if (isAgentProvider(provider)) return 'agent';
-    if (CHAT_MODEL_PROVIDERS.has(provider)) return 'model';
-    return 'agent';
+    return providerIsAgent(provider) ? 'agent' : 'model';
   };
 
   const isProviderSwitchDisabled = (targetProvider: string): boolean => {
@@ -221,7 +275,7 @@ export function ModelSelector({
 
   // Group providers by type (agents vs models)
   const groupedProviders = Object.entries(models).reduce((acc, [provider, providerModels]) => {
-    const isAgent = getProviderType(provider) === 'agent';
+    const isAgent = providerIsAgent(provider);
     const type = isAgent ? 'agents' : 'models';
     if (!acc[type]) acc[type] = {};
     acc[type][provider] = providerModels;

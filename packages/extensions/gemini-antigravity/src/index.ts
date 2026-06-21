@@ -1,45 +1,36 @@
 /**
  * Google Gemini (Antigravity) extension - standalone marketplace package.
  *
- * Contributes ONE AI agent provider:
+ * Contributes TWO AI providers:
+ *   - antigravity-gemini        (chat, default model = Gemini 3.5 Flash High)
  *   - antigravity-gemini-agent  (agent, tool-loop over GetModelResponse)
  *
  * The Antigravity language server lifecycle (spawn + HTTPS RPC against the
- * self-signed cert at 127.0.0.1) runs as a backend module utility-process.
+ * self-signed cert at 127.0.0.1) stays in the main process behind the
+ * `antigravity:*` IPC bridge. The provider classes below run in the renderer
+ * (where extensions live) and call that bridge for every server interaction.
  * Auth rides the user's ~/.gemini login - no API key is stored by nimbalyst.
  *
  * Exports:
- *   - aiProviders.AntigravityAgentProvider  (matches manifest aiAgentProviders[].component reference)
+ *   - aiProviders.AntigravityProvider       (matches manifest aiProviders[].component)
+ *   - aiProviders.AntigravityAgentProvider  (matches manifest aiProviders[].component)
+ *   - settingsPanel.AntigravitySettings
  *   - settingsPanel.AntigravityAgentSettings
  */
 
-// AntigravityAgentProvider class moved into the backend module
-// (src/backend/agent.ts -> dist/agent.js). The renderer-side surface is now
-// just the settings panel + the activate hook.
+import { AntigravityProvider } from './AntigravityProvider';
+import { AntigravityAgentProvider } from './AntigravityAgentProvider';
+import { AntigravitySettings } from './components/AntigravitySettings';
 import { AntigravityAgentSettings } from './components/AntigravityAgentSettings';
-// The manifest is the single source of truth for the model id list, so the
-// detection default cannot drift from what the host advertises.
-import manifest from '../manifest.json';
 
-interface ManifestAgentProvider { id: string; models?: Array<{ id: string }> }
-const MANIFEST_AGENT_PROVIDERS: ManifestAgentProvider[] =
-  (manifest as { contributions?: { aiAgentProviders?: ManifestAgentProvider[] } })
-    .contributions?.aiAgentProviders ?? [];
-
-/** All model ids declared for a contributed provider (manifest order). */
-function declaredModelIds(providerId: string): string[] {
-  const provider = MANIFEST_AGENT_PROVIDERS.find((p) => p.id === providerId);
-  return (provider?.models ?? []).map((m) => m.id);
-}
-
-/** Provider IDs we contribute (must match manifest aiAgentProviders[].id). */
+/** Provider IDs we contribute (must match manifest aiProviders[].id). */
 const CONTRIBUTED_PROVIDER_IDS = [
+  'antigravity-gemini',
   'antigravity-gemini-agent',
 ] as const;
 
 interface PersistedProviderSettings {
   enabled?: boolean;
-  models?: string[];
   [key: string]: unknown;
 }
 
@@ -51,13 +42,13 @@ interface AISettingsSnapshot {
 /**
  * Idempotent enable-on-activate.
  *
- * Reads the current provider settings, then for the contributed provider:
+ * Reads the current provider settings, then for each contributed provider:
  *   - If the user has explicitly set `enabled: false`, leave it alone (opt-out wins).
  *   - Otherwise (missing entry OR `enabled !== false`), write `enabled: true`.
  *
  * Replaces the previous sentinel-based first-install flow. The sentinel was
  * fragile: if the original install's write failed silently, the sentinel could
- * still be set, leaving the provider permanently disabled until the user
+ * still be set, leaving both providers permanently disabled until the user
  * intervened. This approach self-heals on every relaunch.
  *
  * After the enable pass, runs a one-shot Test connection so the user sees a
@@ -90,7 +81,7 @@ async function runActivationEnable(): Promise<void> {
     currentProviderSettings = snapshot?.providerSettings ?? {};
   } catch (err) {
     console.error('[gemini-antigravity] enable-on-activate: aiGetSettings failed:', err);
-    // Fall through with empty snapshot; write-through still enables the provider.
+    // Fall through with empty snapshot; write-through still enables both providers.
   }
 
   // 2) Determine which contributed providers need to be enabled.
@@ -105,16 +96,7 @@ async function runActivationEnable(): Promise<void> {
       continue;
     }
     // Preserve any other fields the user/host may have set (e.g. defaultModel).
-    const slice: PersistedProviderSettings = { ...(existing ?? {}), enabled: true };
-    // Default-select every model the first time the provider is detected, so
-    // all model checkboxes are ticked without the user opening Settings (parity
-    // with Claude). Only when models has never been set - a user who has
-    // customised the selection, including clearing it, is left untouched.
-    if (existing?.models === undefined) {
-      const ids = declaredModelIds(providerId);
-      if (ids.length > 0) slice.models = ids;
-    }
-    slicesToWrite[providerId] = slice;
+    slicesToWrite[providerId] = { ...(existing ?? {}), enabled: true };
   }
 
   if (Object.keys(slicesToWrite).length === 0) {
@@ -136,7 +118,7 @@ async function runActivationEnable(): Promise<void> {
     if (api.aiClearModelCache) {
       await api.aiClearModelCache();
     }
-    const result = await api.aiTestConnection('antigravity-gemini-agent');
+    const result = await api.aiTestConnection('antigravity-gemini');
     if (result?.success) {
       console.log('[gemini-antigravity] auto-test: connection OK');
     } else {
@@ -165,13 +147,20 @@ export async function deactivate(): Promise<void> {
   console.log('[gemini-antigravity] Extension deactivated');
 }
 
-/**
- * Settings panel components, keyed by the manifest `settingsPanelComponent`
- * name. The provider class itself lives in the backend module entry now.
- */
+/** AI provider implementations, keyed by the manifest `component` name. */
+export const aiProviders = {
+  AntigravityProvider,
+  AntigravityAgentProvider,
+};
+
+/** Settings panel components, keyed by the manifest `component` name. */
 export const settingsPanel = {
+  AntigravitySettings,
   AntigravityAgentSettings,
 };
+
+export type { AntigravityProviderHost } from './AntigravityProvider';
+export type { AntigravityAgentProviderHost } from './AntigravityAgentProvider';
 
 // Re-export the contributed IDs for any host integration that wants to know
 // which providers this extension owns (used by sidebar usage chip targeting).

@@ -6,7 +6,12 @@ import { getTheme, getThemeIsDark } from '../utils/store';
  * Only 'light' and 'dark' are true built-in themes.
  * For file-based themes, uses the stored isDark value from theme metadata.
  */
-function isCurrentThemeDark(currentTheme: string): boolean {
+function isCurrentThemeDark(currentTheme: string | undefined): boolean {
+    // Defensive: theme may be undefined if the store has not resolved a value
+    // yet (e.g. early window creation). Fall back to the OS preference instead
+    // of dereferencing undefined.
+    if (!currentTheme) return nativeTheme.shouldUseDarkColors;
+
     // Built-in themes
     if (currentTheme === 'light') return false;
     if (currentTheme === 'dark') return true;

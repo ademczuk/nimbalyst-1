@@ -195,7 +195,7 @@ interface InstallOptions {
   localInstall?: boolean;
 }
 
-type CLITool = 'claude-code' | 'openai-codex' | 'opencode' | 'copilot-cli';
+type CLITool = 'claude-code' | 'openai-codex' | 'opencode' | 'copilot-cli' | 'gemini-cli';
 
 // CLI commands and their npm packages
 const CLI_PACKAGES: Record<CLITool, string> = {
@@ -203,6 +203,7 @@ const CLI_PACKAGES: Record<CLITool, string> = {
   'openai-codex': '@openai/codex',                   // OpenAI Codex package (actual on npm!)
   'opencode': 'opencode-ai',                           // OpenCode open source agent (npm: opencode-ai, binary: opencode)
   'copilot-cli': '@github/copilot',                       // GitHub Copilot CLI (npm: @github/copilot, binary: copilot)
+  'gemini-cli': '@google/gemini-cli',                     // Google Gemini CLI (npm: @google/gemini-cli, binary: gemini)
 };
 
 const CLI_COMMANDS: Record<CLITool, string> = {
@@ -210,6 +211,7 @@ const CLI_COMMANDS: Record<CLITool, string> = {
   'openai-codex': 'codex',     // The actual command once installed
   'opencode': 'opencode',      // The actual command once installed
   'copilot-cli': 'copilot',    // The actual command once installed
+  'gemini-cli': 'gemini',      // The actual command once installed
 };
 
 export class CLIManager {

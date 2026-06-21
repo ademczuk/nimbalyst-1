@@ -47,6 +47,8 @@ import type {
   BackendModuleContribution,
   ExtensionManifest,
 } from '@nimbalyst/extension-sdk';
+import { getEnhancedPath } from '../services/CLIManager';
+import type { ChildProcess } from 'child_process';
 
 /**
  * Validate `contributions.backendModules` on a parsed manifest, then apply
@@ -107,6 +109,19 @@ function validateAndScrubBackendModules(
 
   return true;
 }
+
+/**
+ * Tracks live child processes spawned via the extension:spawn streaming bridge.
+ * Keyed by a generated handleId. senderId binds the handle to the renderer
+ * (webContents.id) that created it, so write/kill can only touch their own
+ * processes. Lazily initialized inside registerExtensionHandlers.
+ */
+interface SpawnedProcessEntry {
+  child: ChildProcess;
+  extensionId: string;
+  senderId: number;
+}
+let spawnedProcesses: Map<string, SpawnedProcessEntry> | undefined;
 
 /**
  * Check if an extension should be visible for the current release channel.
@@ -287,11 +302,25 @@ async function getBuiltinExtensionsDirectory(): Promise<string | null> {
 
 /**
  * Get all extension directories (both user and built-in).
+ *
+ * CONTRACT: The USER extensions directory is always the FIRST entry.
+ * Renderer's ExtensionLoader.discoverExtensions relies on this ordering to
+ * (a) let user-installed copies win on ID conflicts and (b) skip bundled
+ * MARKETPLACE-ONLY extensions when scanning built-in dirs (see
+ * `extensions:get-bundled-only-ids` and `getBundledOnlyExtensionIds`).
+ *
+ * Bundled .nimext packages (e.g. gemini-cli, gemini-antigravity) ship in
+ * `resources/bundled-extensions/` and appear as INSTALLABLE in the Marketplace
+ * grid. They do NOT auto-load from the built-in extensions directory; the
+ * user must explicitly install them via Marketplace, which copies the
+ * .nimext into the user dir (where it then loads normally). This prevents
+ * marketplace extensions from appearing pre-installed simply because the
+ * development checkout has a sibling source folder under `packages/extensions/`.
  */
 export async function getAllExtensionDirectories(): Promise<string[]> {
   const dirs: string[] = [];
 
-  // Always include user extensions directory
+  // Always include user extensions directory FIRST so it wins on ID conflicts.
   dirs.push(await getUserExtensionsDirectory());
 
   // Include built-in extensions if available
@@ -301,6 +330,100 @@ export async function getAllExtensionDirectories(): Promise<string[]> {
   }
 
   return dirs;
+}
+
+/**
+ * Candidate directories where the app's bundled .nimext packages live.
+ * Mirrors `getBuiltinExtensionsDirectory` resolution for packaged vs dev
+ * (vite build) runs. Used by `getBundledOnlyExtensionIds` and by the
+ * marketplace handler to resolve the actual .nimext file at install time.
+ */
+export function bundledExtensionsDirCandidates(): string[] {
+  return app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'bundled-extensions'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'bundled-extensions'),
+      ]
+    : [
+        // __dirname is out/main or out/main/chunks; resources is at packages/electron/resources
+        path.join(__dirname, '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', 'resources', 'bundled-extensions'),
+        path.join(__dirname, '..', '..', '..', '..', 'electron', 'resources', 'bundled-extensions'),
+      ];
+}
+
+/**
+ * Compute the set of extension IDs that ship as bundled .nimext packages in
+ * `resources/bundled-extensions/`. These are MARKETPLACE-ONLY: they appear in
+ * the marketplace and install into the USER extensions dir on explicit user
+ * action. They must NOT be auto-discovered out of the BUILT-IN extensions dir
+ * even if a development checkout has a sibling source folder under
+ * `packages/extensions/` (which happens for in-tree development of marketplace
+ * extensions). User-installed copies in the user extensions dir still load
+ * normally.
+ *
+ * The ID is derived from the .nimext filename: `gemini-antigravity.nimext` ->
+ * `gemini-antigravity`. The bundled registry (`extensionRegistry.json`) keeps
+ * the same naming convention via `downloadUrl: "bundled:<id>.nimext"`.
+ */
+export async function getBundledOnlyExtensionIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const dir of bundledExtensionsDirCandidates()) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.toLowerCase().endsWith('.nimext')) {
+        ids.add(entry.slice(0, -'.nimext'.length));
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+/**
+ * Look up an installed extension's manifest by its declared id, scanning all
+ * extension directories (user + built-in). Returns the parsed manifest, or
+ * null if no installed extension declares that id.
+ *
+ * NOTE: the id is supplied by the renderer and is therefore spoofable. This
+ * lookup at least guarantees the spawn/exec only proceeds for an id that maps
+ * to a real installed manifest carrying the required permission. Binding the
+ * sender's webContents to a specific extension is a larger change owned by the
+ * extension-loader; tracked as a TODO at the spawn handler.
+ */
+async function findExtensionManifestById(extensionId: string): Promise<Record<string, unknown> | null> {
+  const extensionDirs = await getAllExtensionDirectories();
+  for (const extDir of extensionDirs) {
+    let subdirs;
+    try {
+      subdirs = await fs.readdir(extDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const subdir of subdirs) {
+      let isDir = subdir.isDirectory();
+      if (!isDir && subdir.isSymbolicLink()) {
+        try {
+          const stat = await fs.stat(path.join(extDir, subdir.name));
+          isDir = stat.isDirectory();
+        } catch { continue; }
+      }
+      if (!isDir) continue;
+      const manifestPath = path.join(extDir, subdir.name, 'manifest.json');
+      try {
+        const manifestJson = await fs.readFile(manifestPath, 'utf-8');
+        const manifest = JSON.parse(manifestJson) as Record<string, unknown>;
+        if (manifest.id === extensionId) {
+          return manifest;
+        }
+      } catch { continue; }
+    }
+  }
+  return null;
 }
 
 /**
@@ -932,6 +1055,12 @@ export function registerExtensionHandlers(): void {
   // Scans both user extensions and built-in extensions directories.
   // User extensions take priority over built-in extensions with the same ID.
   // Extensions with requiredReleaseChannel are filtered based on user's release channel.
+  // Bundled MARKETPLACE-ONLY extensions (those shipped as .nimext packages in
+  // resources/bundled-extensions/) are NOT reported as installed when found
+  // only in the built-in dir -- they appear there in dev because the source
+  // folder is a sibling under packages/extensions/, but the contract is that
+  // the user must explicitly install them through the marketplace into the
+  // user extensions dir before they count as installed.
   safeHandle('extensions:list-installed', async () => {
     try {
       const extensions: Array<{
@@ -942,6 +1071,7 @@ export function registerExtensionHandlers(): void {
       }> = [];
       const seenExtensionIds = new Set<string>();
       const currentChannel = getReleaseChannel();
+      const bundledOnlyIds = new Set(await getBundledOnlyExtensionIds());
 
       // Clear previously registered file types
       clearRegisteredExtensions();
@@ -987,6 +1117,17 @@ export function registerExtensionHandlers(): void {
             if (seenExtensionIds.has(extensionId)) {
               continue;
             }
+
+            // Skip bundled marketplace-only extensions encountered in the
+            // BUILT-IN dir. They only count as installed once the user has
+            // explicitly installed them through the marketplace (which copies
+            // the .nimext into the user extensions dir; that copy is picked
+            // up earlier in the loop because user dirs come first).
+            if (isBuiltinDir && bundledOnlyIds.has(extensionId)) {
+              logger.main.debug(`[ExtensionHandlers] Skipping bundled marketplace-only extension ${extensionId} from built-in dir (not user-installed)`);
+              continue;
+            }
+
             seenExtensionIds.add(extensionId);
 
             // Skip extensions that require a different release channel
@@ -1355,6 +1496,160 @@ export function registerExtensionHandlers(): void {
         exitCode: err.code || 1,
       };
     }
+  });
+
+  // ============================================================================
+  // Extension Streaming Spawn Bridge (long-lived bidirectional child process)
+  //
+  // Unlike extension:exec (one-shot, buffered), this spawns a persistent process
+  // and streams stdout/stderr/exit back to the SENDER renderer over IPC, and
+  // accepts stdin writes. Needed for protocols that hold an open stdio channel
+  // (e.g. `gemini --acp`). Gated on the manifest `process` permission.
+  // ============================================================================
+
+  spawnedProcesses ??= new Map<string, SpawnedProcessEntry>();
+
+  // Spawn a long-lived child process on behalf of an extension (requires process permission)
+  safeHandle('extension:spawn', async (event, params: {
+    extensionId: string;
+    command: string;
+    args?: string[];
+    options?: { cwd?: string; env?: Record<string, string> };
+  }) => {
+    const { extensionId, command, args = [], options } = params;
+
+    // SECURITY: validate the (renderer-supplied, spoofable) extensionId against
+    // installed manifests and require the `process` permission before spawning.
+    // TODO: bind event.sender -> extensionId so the id cannot be spoofed by a
+    //   different panel; depends on the extension-loader sender registry.
+    const manifest = await findExtensionManifestById(extensionId);
+    if (!manifest) {
+      return { success: false, error: `Extension ${extensionId} not found` };
+    }
+    const permissions = manifest.permissions as { process?: boolean } | undefined;
+    if (!permissions?.process) {
+      return { success: false, error: `Extension ${extensionId} lacks process permission` };
+    }
+
+    const { spawn } = await import('child_process');
+
+    // On Windows, npm-installed CLIs resolve to a .cmd/.bat shim. Node 20.12.2+ /
+    // 22 refuse to spawn .cmd/.bat without a shell (CVE-2024-27980 mitigation), so
+    // run the bare command name through a shell with its dir prepended to PATH.
+    // Mirrors GeminiACPProtocol.ensureProcess.
+    // Build a string env merged with the app's enhanced PATH so npm-global CLIs
+    // (e.g. gemini) resolve even when the GUI process PATH is minimal. Extensions
+    // cannot see the enhanced PATH themselves, so the bridge supplies it.
+    const spawnEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') spawnEnv[k] = v;
+    }
+    if (options?.env) {
+      for (const [k, v] of Object.entries(options.env)) {
+        if (typeof v === 'string') spawnEnv[k] = v;
+      }
+    }
+    spawnEnv.PATH = getEnhancedPath() + path.delimiter + (spawnEnv.PATH ?? spawnEnv.Path ?? '');
+
+    const isWin = process.platform === 'win32';
+    const hasPathSeparator = command.includes('/') || command.includes('\\');
+    const isWinScript = isWin && /\.(cmd|bat)$/i.test(command);
+    let spawnCommand = command;
+    // On Windows, .cmd/.bat (CVE-2024-27980) and bare command names both need a
+    // shell so PATHEXT resolves e.g. `gemini` -> `gemini.cmd` against PATH.
+    let useShell = isWinScript || (isWin && !hasPathSeparator);
+    if (isWinScript) {
+      const dir = path.dirname(command);
+      spawnEnv.PATH = dir + path.delimiter + spawnEnv.PATH;
+      spawnCommand = path.basename(command);
+    }
+
+    const handleId = `spawn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    let child;
+    try {
+      child = spawn(spawnCommand, args, {
+        cwd: options?.cwd,
+        env: spawnEnv,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: useShell,
+        windowsHide: true,
+      });
+    } catch (spawnError: unknown) {
+      const msg = spawnError instanceof Error ? spawnError.message : String(spawnError);
+      return { success: false, error: `Failed to spawn: ${msg}` };
+    }
+
+    const sender = event.sender;
+    spawnedProcesses!.set(handleId, { child, extensionId, senderId: sender.id });
+
+    const sendToSender = (channel: string, payload: unknown) => {
+      // The renderer may have navigated/closed; guard against a destroyed sender.
+      if (!sender.isDestroyed()) {
+        sender.send(channel, payload);
+      }
+    };
+
+    child.stdout?.on('data', (data: Buffer) => {
+      sendToSender('extension:spawn:stdout', { handleId, data: data.toString() });
+    });
+    child.stderr?.on('data', (data: Buffer) => {
+      sendToSender('extension:spawn:stderr', { handleId, data: data.toString() });
+    });
+    child.on('error', (err: Error) => {
+      sendToSender('extension:spawn:stderr', { handleId, data: `[spawn error] ${err.message}\n` });
+    });
+    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+      sendToSender('extension:spawn:exit', { handleId, code, signal });
+      spawnedProcesses!.delete(handleId);
+    });
+
+    logger.main.info(`[ExtensionHandlers] Spawned process for ${extensionId}: ${command} (handle=${handleId})`);
+    return { success: true, handleId };
+  });
+
+  // Write to a spawned process's stdin
+  safeHandle('extension:spawn:write', async (event, params: { handleId: string; data: string }) => {
+    const { handleId, data } = params;
+    const entry = spawnedProcesses?.get(handleId);
+    if (!entry) {
+      return { success: false, error: `No spawned process for handle ${handleId}` };
+    }
+    // Only the renderer that created the handle may write to it.
+    if (entry.senderId !== event.sender.id) {
+      return { success: false, error: `Handle ${handleId} not owned by sender` };
+    }
+    if (!entry.child.stdin || entry.child.stdin.destroyed) {
+      return { success: false, error: `Process stdin not writable for handle ${handleId}` };
+    }
+    try {
+      entry.child.stdin.write(data);
+      return { success: true };
+    } catch (writeError: unknown) {
+      const msg = writeError instanceof Error ? writeError.message : String(writeError);
+      return { success: false, error: `Write failed: ${msg}` };
+    }
+  });
+
+  // Kill a spawned process and clean up its handle
+  safeHandle('extension:spawn:kill', async (event, params: { handleId: string }) => {
+    const { handleId } = params;
+    const entry = spawnedProcesses?.get(handleId);
+    if (!entry) {
+      // Already gone (e.g. exited). Treat as success for idempotent cleanup.
+      return { success: true };
+    }
+    if (entry.senderId !== event.sender.id) {
+      return { success: false, error: `Handle ${handleId} not owned by sender` };
+    }
+    try {
+      entry.child.kill();
+    } catch (killError: unknown) {
+      const msg = killError instanceof Error ? killError.message : String(killError);
+      logger.main.warn(`[ExtensionHandlers] Failed to kill handle ${handleId}: ${msg}`);
+    }
+    spawnedProcesses!.delete(handleId);
+    return { success: true };
   });
 
   // ============================================================================

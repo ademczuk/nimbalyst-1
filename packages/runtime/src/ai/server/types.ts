@@ -6,6 +6,7 @@ import type { ToolDefinition } from '../tools';
 import type { EffortLevel } from './effortLevels';
 import type { ToolResult } from './protocols/ProtocolInterface';
 import { ModelIdentifier } from './ModelIdentifier';
+import { ProviderRegistry } from './ProviderRegistry';
 import {
   CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS,
   CLAUDE_CODE_PINNED_SDK_MODELS,
@@ -151,7 +152,7 @@ export interface Message {
  * Add new providers here -- the type, runtime array, and exhaustiveness
  * checks all derive from this one definition.
  */
-export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli'] as const;
+export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli', 'gemini-cli', 'antigravity-gemini', 'antigravity-gemini-agent', 'kimi-code', 'kimi-code-agent'] as const;
 
 export type AIProviderType = typeof AI_PROVIDER_TYPES[number];
 
@@ -170,8 +171,10 @@ export function assertExhaustiveProvider(provider: never): never {
   throw new Error(`Unhandled provider: ${provider}`);
 }
 
-export function isAgentProvider(provider: string | null | undefined): provider is 'claude-code' | 'claude-code-cli' | 'openai-codex' | 'openai-codex-acp' | 'opencode' | 'copilot-cli' {
-  return provider === 'claude-code' || provider === 'claude-code-cli' || provider === 'openai-codex' || provider === 'openai-codex-acp' || provider === 'opencode' || provider === 'copilot-cli';
+export function isAgentProvider(provider: string | null | undefined): provider is 'claude-code' | 'claude-code-cli' | 'openai-codex' | 'openai-codex-acp' | 'opencode' | 'copilot-cli' | 'gemini-cli' | 'antigravity-gemini-agent' | 'kimi-code-agent' {
+  // Hardcoded built-ins first (sound narrowing), then the registry so
+  // extension-contributed agent providers are also recognized.
+  return provider === 'claude-code' || provider === 'claude-code-cli' || provider === 'openai-codex' || provider === 'openai-codex-acp' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli' || provider === 'antigravity-gemini-agent' || provider === 'kimi-code-agent' || ProviderRegistry.isAgent(provider);
 }
 
 /**

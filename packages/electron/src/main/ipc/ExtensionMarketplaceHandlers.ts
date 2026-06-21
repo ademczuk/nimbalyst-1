@@ -16,10 +16,15 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import extractZip from 'extract-zip';
-import { BrowserWindow, net } from 'electron';
+import { app, BrowserWindow, net } from 'electron';
 import { logger } from '../utils/logger';
 import { safeHandle } from '../utils/ipcRegistry';
-import { getUserExtensionsDirectory, initializeExtensionFileTypes } from './ExtensionHandlers';
+import {
+  getUserExtensionsDirectory,
+  initializeExtensionFileTypes,
+  bundledExtensionsDirCandidates,
+  getBundledOnlyExtensionIds,
+} from './ExtensionHandlers';
 import {
   getMarketplaceInstalls,
   getMarketplaceInstall,
@@ -67,6 +72,13 @@ export interface RegistryExtension {
   checksum: string;
   repositoryUrl: string;
   changelog: string;
+  /**
+   * When true, this extension ships bundled with the app (not in the public
+   * upstream catalog). Its `downloadUrl` uses the `bundled:<file>` scheme and
+   * the package is read from the app's bundled-extensions resources. Local
+   * extras are merged into the live registry so they appear in the grid.
+   */
+  local?: boolean;
 }
 
 export interface RegistryCategory {
@@ -96,6 +108,45 @@ interface InstallResult {
 let pendingMarketplaceInstallRequest: PendingMarketplaceInstallRequest | null = null;
 
 /**
+ * Merge bundled local-only extensions (e.g. gemini-cli) into a registry result
+ * so they appear in the marketplace grid alongside the live upstream catalog.
+ * Only entries flagged `local` in the bundled registry are merged, and only
+ * when not already present in the live data.
+ */
+function mergeLocalExtensions(data: RegistryData): void {
+  const localExtras = ((mockRegistry as RegistryData).extensions || []).filter(e => e.local);
+  if (localExtras.length === 0) return;
+  const haveIds = new Set((data.extensions || []).map(e => e.id));
+  if (!data.extensions) data.extensions = [];
+  for (const extra of localExtras) {
+    if (!haveIds.has(extra.id)) data.extensions.push(extra);
+  }
+}
+
+/**
+ * Resolve a bundled .nimext file shipped in the app's resources. Mirrors the
+ * built-in extensions directory resolution for packaged vs dev (vite build)
+ * runs. Returns null if not found.
+ */
+async function resolveBundledNimext(fileName: string): Promise<string | null> {
+  const candidates = bundledExtensionsDirCandidates().map(dir => path.join(dir, fileName));
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+// bundledExtensionsDirCandidates and getBundledOnlyExtensionIds now live in
+// ExtensionHandlers.ts so both this handler and extensions:list-installed can
+// share a single source of truth for what counts as a bundled marketplace-only
+// extension.
+
+/**
  * Fetch registry data from the live Cloudflare Worker.
  * Falls back to mock data if the live registry is unreachable.
  */
@@ -112,6 +163,7 @@ async function fetchRegistry(): Promise<RegistryData> {
 
     if (response.ok) {
       const data = await response.json() as RegistryData;
+      mergeLocalExtensions(data);
       registryCache = data;
       registryCacheTimestamp = now;
       logger.main.info(`[ExtMarketplace] Fetched live registry: ${data.extensions?.length ?? 0} extensions`);
@@ -265,6 +317,21 @@ const noopProgress: ProgressReporter = () => {};
  * Returns the path to the downloaded temp file.
  */
 async function downloadFile(url: string): Promise<string> {
+  // Bundled-local packages (gemini-antigravity, kimi-code) ship inside the app
+  // and use the `bundled:<file>` scheme instead of a remote URL. Resolve to the
+  // local .nimext and copy it into a temp file so the rest of the
+  // download-extract-validate flow is identical to the remote path.
+  if (url.startsWith('bundled:')) {
+    const fileName = url.slice('bundled:'.length);
+    const bundledPath = await resolveBundledNimext(fileName);
+    if (!bundledPath) {
+      throw new Error(`Bundled extension package not found: ${fileName}`);
+    }
+    const tempFile = path.join(os.tmpdir(), `nimext-${Date.now()}-${Math.random().toString(36).slice(2)}.nimext`);
+    await fs.copyFile(bundledPath, tempFile);
+    return tempFile;
+  }
+
   const response = await net.fetch(url);
   if (!response.ok) {
     throw new Error(`Download failed: HTTP ${response.status}`);
@@ -905,10 +972,72 @@ export function queueMarketplaceInstallRequest(extensionId: string): void {
 }
 
 /**
+ * Reconcile the marketplace-installs electron-store entries against the actual
+ * contents of the user extensions dir. If an entry is tracked but its
+ * extension directory is missing (e.g. the user deleted it by hand outside
+ * the UI), prune the stale entry. Returns the reconciled installs map.
+ *
+ * This is the source of truth for what counts as "installed via marketplace":
+ * the tracking record AND the on-disk directory. Either one missing means
+ * not installed.
+ */
+export async function reconcileMarketplaceInstallsWithDisk(): Promise<Record<string, MarketplaceInstallRecord>> {
+  const installs = getMarketplaceInstalls();
+  const ids = Object.keys(installs);
+  if (ids.length === 0) return installs;
+
+  const extensionsDir = await getUserExtensionsDirectory();
+  const pruned: string[] = [];
+
+  for (const extensionId of ids) {
+    const installPath = path.join(extensionsDir, extensionId);
+    try {
+      const stat = await fs.stat(installPath);
+      if (!stat.isDirectory()) {
+        pruned.push(extensionId);
+        continue;
+      }
+      // Also require a manifest.json -- a bare directory without a manifest
+      // would have failed to load anyway.
+      try {
+        await fs.access(path.join(installPath, 'manifest.json'));
+      } catch {
+        pruned.push(extensionId);
+      }
+    } catch {
+      // Directory does not exist -- the user deleted it out of band.
+      pruned.push(extensionId);
+    }
+  }
+
+  if (pruned.length === 0) return installs;
+
+  for (const extensionId of pruned) {
+    delete installs[extensionId];
+    removeMarketplaceInstall(extensionId);
+    logger.main.info(`[ExtMarketplace] Pruned stale marketplace install record for ${extensionId} (directory missing from user extensions dir)`);
+  }
+
+  return installs;
+}
+
+/**
  * Silently check for and apply extension updates.
  * Intended to be called once on app startup (fire-and-forget).
+ *
+ * Also reconciles marketplace install tracking against disk before checking
+ * for updates so we don't try to "update" an extension the user has already
+ * deleted out of band.
  */
 export async function runExtensionAutoUpdate(): Promise<void> {
+  // Reconcile install tracking against disk first so we don't try to "update"
+  // an extension the user already deleted out of band.
+  try {
+    await reconcileMarketplaceInstallsWithDisk();
+  } catch (err) {
+    logger.main.warn('[ExtMarketplace] Install reconciliation failed:', err);
+  }
+
   try {
     const registry = await fetchRegistry();
     await migrateRenamedExtensions(registry);
@@ -947,9 +1076,13 @@ export function registerExtensionMarketplaceHandlers(): void {
   });
 
   // Get marketplace-installed extensions
+  //
+  // Reconciles the electron-store tracking against the actual user extensions
+  // dir on every call so the renderer never sees a ghost entry left behind by
+  // an out-of-band directory delete. Cheap: O(installed-count) fs.stat calls.
   safeHandle('extension-marketplace:get-installed', async () => {
     try {
-      const installs = getMarketplaceInstalls();
+      const installs = await reconcileMarketplaceInstallsWithDisk();
       return { success: true, data: installs };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1052,5 +1185,20 @@ export function registerExtensionMarketplaceHandlers(): void {
     registryCache = null;
     registryCacheTimestamp = 0;
     return { success: true };
+  });
+
+  // List the extension IDs that ship as bundled .nimext packages. The
+  // renderer extension loader uses this to skip auto-discovery of those
+  // extensions from the BUILT-IN extensions directory, so they only load
+  // when the user explicitly installs them via the Marketplace.
+  safeHandle('extensions:get-bundled-only-ids', async () => {
+    try {
+      const ids = await getBundledOnlyExtensionIds();
+      return { success: true, data: ids };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.main.warn('[ExtMarketplace] Failed to list bundled-only extension IDs:', error);
+      return { success: false, error: message };
+    }
   });
 }

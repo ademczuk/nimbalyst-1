@@ -322,6 +322,9 @@ export interface ExtensionPermissions {
    * this top-level array covers the panel/renderer surface.
    */
   catalog?: ExtensionPermissionId[];
+
+  /** Can spawn long-lived child processes */
+  process?: boolean;
 }
 
 export interface ExtensionContributions {
@@ -387,6 +390,13 @@ export interface ExtensionContributions {
    * Settings panel shown in the Settings screen under "Extensions" section.
    */
   settingsPanel?: SettingsPanelContribution;
+
+  /**
+   * AI providers the extension registers (e.g., a CLI agent or chat backend).
+   * Each entry adds a provider descriptor to the runtime ProviderRegistry so
+   * the provider appears in model pickers and the chat/agent allowlists.
+   */
+  aiProviders?: AiProviderContribution[];
 
   /**
    * Document headers that render above editors for matching file types.
@@ -724,6 +734,111 @@ export interface SlashCommandContribution {
 }
 
 /**
+ * Transcript raw-event parser kind for an AI provider.
+ * Mirrors the runtime `TranscriptParserKind` so extension manifests can
+ * declare which parser the host should use for the provider's transcript.
+ */
+export type AiProviderTranscriptParser =
+  | 'codex'
+  | 'codex-acp'
+  | 'copilot'
+  | 'claude-code'
+  | 'opencode';
+
+/**
+ * AI provider contribution declared in manifest.json.
+ *
+ * Registers a provider into the runtime ProviderRegistry as a metadata-only
+ * descriptor. The provider implementation is exported from the module's
+ * `aiProviders` record under the key named by `component`; the host loads it
+ * and (in a later stream) wires the heavy factories. This contribution only
+ * supplies the renderer-safe metadata.
+ *
+ * @example
+ * ```json
+ * {
+ *   "contributions": {
+ *     "aiProviders": [{
+ *       "id": "my-cli",
+ *       "label": "My CLI Agent",
+ *       "component": "myCliProvider",
+ *       "isAgent": true,
+ *       "transcriptParser": "codex",
+ *       "icon": "terminal"
+ *     }]
+ *   }
+ * }
+ * ```
+ */
+export interface AiProviderContribution {
+  /**
+   * Unique provider id (e.g., 'my-cli'). Becomes the `ProviderDescriptor.id`.
+   */
+  id: string;
+
+  /**
+   * Human-facing display label (e.g., 'My CLI Agent').
+   */
+  label: string;
+
+  /**
+   * Name of the exported provider implementation from the module's
+   * `aiProviders` record. The host matches this against the export key.
+   */
+  component: string;
+
+  /**
+   * Material icon name. Falls back to `id` when omitted.
+   */
+  icon?: string;
+
+  /**
+   * SDK/CLI agent provider (shown in the agent-provider allowlist).
+   * @default false
+   */
+  isAgent?: boolean;
+
+  /**
+   * Plain chat provider (shown in the chat-provider allowlist).
+   * @default false
+   */
+  isChat?: boolean;
+
+  /**
+   * A session needs an API key before streaming.
+   * @default false
+   */
+  requiresApiKey?: boolean;
+
+  /**
+   * Models are discovered dynamically and should not be persisted.
+   * @default false
+   */
+  dynamicModels?: boolean;
+
+  /**
+   * Transcript raw-parser kind for rendering this provider's output.
+   */
+  transcriptParser?: AiProviderTranscriptParser;
+
+  /**
+   * Static default model id for this provider.
+   */
+  defaultModelId?: string;
+
+  /**
+   * MCP scoping id, when the provider is MCP-capable.
+   */
+  mcpProviderId?: string;
+
+  /**
+   * Name of an exported settings-panel component (key in the module's
+   * `settingsPanel` record) shown alongside this provider's configuration.
+   */
+  settingsPanelComponent?: string;
+}
+
+/**
  * Theme contribution for extensions.
  * Extensions can provide custom color themes that users can select.
  */
@@ -753,6 +868,18 @@ export interface ThemeContribution {
    */
   monaco?: MonacoThemeContribution;
 }
+
+/**
+ * Provider implementation exported by an extension module.
+ *
+ * This is the value the extension exports under a key in its `aiProviders`
+ * record (matched by `AiProviderContribution.component`). The shape is opaque
+ * at this layer -- the host treats it as an unknown provider implementation and
+ * a later stream is responsible for invoking it (constructing instances,
+ * fetching models). Declaring it as a distinct alias keeps the export typed and
+ * loadable without pinning the heavy provider contract into the SDK.
+ */
+export type AiProviderExport = unknown;
 
 /**
  * The module interface that extensions export.
@@ -805,6 +932,13 @@ export interface ExtensionModule {
    * Keys match the `settingsPanel.component` in manifest.json.
    */
   settingsPanel?: Record<string, ComponentType<SettingsPanelProps>>;
+
+  /**
+   * AI provider implementations keyed by export name.
+   * Keys match each `aiProviders[].component` in manifest.json. Values are
+   * opaque provider implementations consumed by the host (see AiProviderExport).
+   */
+  aiProviders?: Record<string, AiProviderExport>;
 }
 
 /**

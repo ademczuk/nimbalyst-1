@@ -1,5 +1,6 @@
 import React from 'react';
 import { MaterialSymbol } from './MaterialSymbol';
+import { ProviderRegistry } from '../../ai/server/ProviderRegistry';
 
 interface IconProps {
   size?: number;
@@ -11,13 +12,25 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   // ACP transport reuses the OpenAI Codex icon (same underlying agent).
   'openai-codex-acp': 'openai-codex',
   'claude-code-cli': 'claude-code',
+  // The 'gemini-cli' and 'gemini' icon keys both render the geometric Gemini
+  // blue-spark logo (see MaterialSymbol CUSTOM_ICONS). Per the user 2026-05-25
+  // request, the icon is the logo only - no "GEMINI CLI" wordmark text. The
+  // gemini-antigravity (Gemini 3.5 Flash) extension reuses the same icon.
+  'gemini-cli': 'gemini-cli',
   // Gemini Antigravity extension provider -> Gemini brand glyph.
-  'antigravity-gemini-agent': 'gemini',
   'antigravity-gemini': 'gemini',
+  'antigravity-gemini-agent': 'gemini',
+  // The 'kimi' icon key renders the Moonshot crescent-moon mark (see
+  // MaterialSymbol CUSTOM_ICONS). Both kimi-code providers (chat + agent)
+  // surface the same brand.
+  'kimi-code': 'kimi',
+  'kimi-code-agent': 'kimi',
 };
 
 export function resolveProviderIcon(provider: string): string {
-  return PROVIDER_ICON_MAP[provider] ?? provider;
+  // Registry first so extension-contributed providers can declare an icon;
+  // falls back to the built-in map, then the provider id itself.
+  return ProviderRegistry.get(provider)?.icon ?? PROVIDER_ICON_MAP[provider] ?? provider;
 }
 
 /**

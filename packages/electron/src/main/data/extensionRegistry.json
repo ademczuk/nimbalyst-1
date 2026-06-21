@@ -3,6 +3,88 @@
   "generatedAt": "2026-04-21T17:42:59.236Z",
   "extensions": [
     {
+      "id": "gemini-antigravity",
+      "name": "Google Gemini (Antigravity)",
+      "description": "Google Gemini 3.5 Flash via the Antigravity language server. Contributes both chat and agent providers. Auth rides your existing ~/.gemini login - no API key required.",
+      "version": "1.0.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "ai-tools"
+      ],
+      "tags": [
+        "gemini",
+        "google",
+        "ai",
+        "antigravity",
+        "agent",
+        "chat"
+      ],
+      "icon": "gemini",
+      "screenshots": [],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "process",
+        "network",
+        "filesystem"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "bundled:gemini-antigravity.nimext",
+      "checksum": "78cd504693cd469db183dd68d3733fc1262f0f9e1960501e237ffe21b8520fc8",
+      "repositoryUrl": "",
+      "changelog": "Initial release as marketplace extension.",
+      "tagline": "Google Gemini 3.5 Flash via the Antigravity language server",
+      "longDescription": "Run Google's Gemini 3.5 Flash models locally through the Antigravity language server. Adds two providers to Nimbalyst: a chat provider for one-shot prompts and an agent provider with tool-loop support.\n\nPrerequisites: install the Antigravity IDE from Google and sign in once so the ~/.gemini OAuth token is on disk. Nimbalyst never runs the browser sign-in flow itself and does not store an API key; it simply attaches to the local Antigravity language server using your existing login. If the IDE is not installed or no ~/.gemini login is present, the provider's Test Connection will report exactly what is missing.",
+      "highlights": [
+        "Gemini 3.5 Flash (High / Medium / Low) via the local Antigravity language server",
+        "Agent provider with tool-loop and meta-agent mode",
+        "Account credits and per-model quota in the settings panel",
+        "Auth rides your existing ~/.gemini login - no API key entered in Nimbalyst",
+        "Requires the Antigravity IDE to be installed and signed in at least once"
+      ],
+      "local": true
+    },
+    {
+      "id": "kimi-code",
+      "name": "Kimi Code",
+      "description": "Moonshot Kimi via the Kimi Code CLI login. Two providers (chat and agent) ride the OAuth credentials the Kimi Code CLI writes after /login; no API key entered in Nimbalyst.",
+      "version": "1.0.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "ai-tools"
+      ],
+      "tags": [
+        "kimi",
+        "moonshot",
+        "k2",
+        "ai",
+        "agent",
+        "chat"
+      ],
+      "icon": "kimi",
+      "screenshots": [],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "network"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "bundled:kimi-code.nimext",
+      "checksum": "7421e819856a67666f82ccefd643d9f2c6899e22670c9de50f17679d75fde650",
+      "repositoryUrl": "",
+      "changelog": "Initial release as marketplace extension.",
+      "tagline": "Moonshot Kimi via the Kimi Code CLI login",
+      "longDescription": "Two providers (chat and agent) that ride your existing Kimi Code CLI authentication. Run /login in the Kimi Code CLI once and Nimbalyst picks up the OAuth credentials from ~/.kimi/credentials/kimi-code.json automatically; no API key entered in Nimbalyst. The chat provider sends one-shot prompts, the agent provider runs a tool-loop with meta-agent host support (a Kimi agent session can spawn Claude or Codex child sessions mid-loop). Default model is kimi-for-coding (Kimi, 256K context) at api.kimi.com/coding/v1. Token refresh is handled in-process via the same auth.kimi.com endpoint the CLI uses.",
+      "highlights": [
+        "Auth rides your existing Kimi Code CLI /login - no API key entered in Nimbalyst",
+        "Kimi chat provider with 256K context window",
+        "Agent provider with tool-loop and meta-agent host mode",
+        "Spawn Claude or Codex child sessions from a Kimi agent loop",
+        "Background token refresh against auth.kimi.com (same flow the CLI uses)"
+      ],
+      "local": true
+    },
+    {
       "id": "com.developer.nimbalyst-mindmap",
       "name": "Nimbalyst Mindmap",
       "description": "A freeform spatial mindmap editor with AI-assisted editing",
@@ -85,7 +167,7 @@
     {
       "id": "com.nimbalyst.astro",
       "name": "Astro",
-      "description": "Visually edit Astro website pages inline — changes write back to YAML data files",
+      "description": "Visually edit Astro website pages inline - changes write back to YAML data files",
       "version": "0.2.0",
       "author": "Unknown",
       "categories": [

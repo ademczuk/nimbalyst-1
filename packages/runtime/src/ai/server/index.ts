@@ -1,6 +1,8 @@
 export * from './types';
 export * from './AIProvider';
 export * from './ProviderFactory';
+export * from './ProviderRegistry';
+export * from './registerBuiltinProviderMetadata';
 export * from './ModelRegistry';
 export * from './SessionManager';
 export * from './providers/ClaudeProvider';
@@ -12,6 +14,7 @@ export * from './providers/ProviderPermissionMixin';
 export * from './providers/LMStudioProvider';
 export * from './providers/OpenCodeProvider';
 export * from './providers/CopilotCLIProvider';
+export * from './providers/GeminiCLIProvider';
 export * from './utils/errorDetection';
 export * from './preferredAgentLanguageConfig';
 export { McpConfigService } from './services/McpConfigService';
@@ -21,6 +24,9 @@ export type { McpConfigServiceDeps } from './services/McpConfigService';
 // barrel which would collide with `buildSystemPrompt`) so the electron-main
 // extension-agent path can deliver the SAME persona text the built-in
 // providers (claude-code, openai-codex) use. Keeping the source shared means
-// the gemini extension and claude-code never drift.
-export { buildMetaAgentSystemPrompt, buildDevAgentSystemPrompt } from '../prompt';
+// the gemini/kimi extensions and claude-code never drift. `buildClaudeCodeSystemPrompt`
+// is re-exported here too so out-of-tree consumers (e.g. the marketplace
+// gemini-antigravity / kimi-code extensions' main-side handlers) can build the
+// meta-agent system prompt without depending on the internal `../prompt` path.
+export { buildClaudeCodeSystemPrompt, buildMetaAgentSystemPrompt, buildDevAgentSystemPrompt } from '../prompt';
 export type { MetaAgentWorkflowPreset } from '../prompt';

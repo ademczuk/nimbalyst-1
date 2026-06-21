@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
-import { getExtensionLoader } from '@nimbalyst/runtime';
+import { MaterialSymbol, getExtensionLoader } from '@nimbalyst/runtime';
 import { store } from '@nimbalyst/runtime/store';
 import { SettingsSidebar, type SettingsCategory } from './SettingsSidebar';
 import { pushNavigationEntryAtom, isRestoringNavigationAtom } from '../../store';
@@ -14,7 +13,13 @@ import { OpenAIPanel } from '../GlobalSettings/panels/OpenAIPanel';
 import { OpenAICodexPanel } from '../GlobalSettings/panels/OpenAICodexPanel';
 import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
+import { GeminiPanel } from '../GlobalSettings/panels/GeminiPanel';
 import { LMStudioPanel } from '../GlobalSettings/panels/LMStudioPanel';
+// antigravity-gemini and antigravity-gemini-agent now ship as a marketplace
+// extension (`gemini-antigravity`). The extension contributes its own
+// settings panel via the settingsPanelComponent contribution; the host
+// renders it through the extension settings-panel registry instead of the
+// hardcoded panels that used to live here.
 import { AdvancedPanel } from '../GlobalSettings/panels/AdvancedPanel';
 import { DatabasePanel } from '../GlobalSettings/panels/DatabasePanel';
 import { AgentFeaturesPanel } from './AgentFeaturesPanel';
@@ -375,6 +380,10 @@ export function SettingsView({
     'opencode',
     'copilot-cli',
     'lmstudio',
+    'antigravity-gemini',
+    'antigravity-gemini-agent',
+    'kimi-code',
+    'kimi-code-agent',
   ];
   const userCategories: SettingsCategory[] = [
     'claude-code',
@@ -384,6 +393,10 @@ export function SettingsView({
     'opencode',
     'copilot-cli',
     'lmstudio',
+    'antigravity-gemini',
+    'antigravity-gemini-agent',
+    'kimi-code',
+    'kimi-code-agent',
     ...(developerMode ? (['github'] as SettingsCategory[]) : []),
     'sync',
     'notifications',
@@ -459,6 +472,31 @@ export function SettingsView({
     loadSettings();
   }, []);
 
+  // Re-fetch model catalog when an extension-contributed provider transitions
+  // from disabled/uninstalled to enabled. Without this, the Agent Providers
+  // panel for antigravity-gemini-agent shows "No models found" forever after
+  // first install: loadSettings() ran at mount when the provider was disabled,
+  // got no models, and there was no second trigger to re-fetch once the
+  // extension's runActivationEnable flipped it on (Bug H).
+  //
+  // We watch providers[selectedCategory]?.enabled. The atom is now reactive to
+  // ai-settings:changed broadcasts from main, so a successful enable flips
+  // this dependency and the effect fires a fresh aiGetAllModels(). The fetch
+  // is cheap; ModelRegistry caches per-provider so the network/IPC cost is
+  // bounded.
+  const selectedProviderEnabled = providers[selectedCategory]?.enabled === true;
+  const selectedProviderHasModels = (availableModels[selectedCategory]?.length ?? 0) > 0;
+  useEffect(() => {
+    if (!selectedProviderEnabled) return;
+    if (selectedProviderHasModels) return;
+    if (loading[selectedCategory]) return;
+    void fetchModels(selectedCategory);
+    // We intentionally depend on selectedProviderEnabled (the boolean) rather
+    // than the full providers map so unrelated provider toggles don't refire.
+    // selectedProviderHasModels keeps us idempotent once the fetch lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory, selectedProviderEnabled, selectedProviderHasModels]);
+
   // Check if workspace has MCP servers (for indicator on Project tab when in global scope)
   useEffect(() => {
     const checkWorkspaceMcpServers = async () => {
@@ -531,7 +569,7 @@ export function SettingsView({
   };
 
   const handleProviderToggle = async (provider: string, enabled: boolean) => {
-    if (enabled && (provider === 'claude-code' || provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli')) {
+    if (enabled && (provider === 'claude-code' || provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli')) {
       await fetchModels(provider);
     }
 
@@ -547,12 +585,12 @@ export function SettingsView({
 
       posthog?.capture('ai_provider_configured', {
         provider,
-        modelCount: (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli') ? 0 : models.length,
+        modelCount: (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli') ? 0 : models.length,
         action: enabled ? 'enabled' : 'disabled'
       });
 
       // OpenAI Codex and OpenCode use dynamic model discovery, not user selection
-      if (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli') {
+      if (provider === 'openai-codex' || provider === 'opencode' || provider === 'copilot-cli' || provider === 'gemini-cli') {
         const currentProvider = prev[provider] || { enabled: false };
         return {
           ...prev,
@@ -574,7 +612,7 @@ export function SettingsView({
     });
     debouncedSave();
 
-    if (enabled && provider !== 'claude-code' && provider !== 'openai-codex' && provider !== 'opencode' && provider !== 'copilot-cli') {
+    if (enabled && provider !== 'claude-code' && provider !== 'openai-codex' && provider !== 'opencode' && provider !== 'copilot-cli' && provider !== 'gemini-cli') {
       fetchModels(provider);
     }
   };
@@ -698,7 +736,7 @@ export function SettingsView({
       onApiKeyChange: handleApiKeyChange,
       onModelToggle: (modelId: string, enabled: boolean) => {
         // OpenAI Codex, OpenCode, and Copilot don't support user model selection - models are discovered dynamically
-        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli') {
+        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli' || selectedCategory === 'gemini-cli') {
           return;
         }
 
@@ -725,7 +763,7 @@ export function SettingsView({
       },
       onSelectAllModels: (selectAll: boolean) => {
         // OpenAI Codex, OpenCode, and Copilot don't support user model selection - models are discovered dynamically
-        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli') {
+        if (selectedCategory === 'openai-codex' || selectedCategory === 'opencode' || selectedCategory === 'copilot-cli' || selectedCategory === 'gemini-cli') {
           return;
         }
 
@@ -834,8 +872,15 @@ export function SettingsView({
         return wrapWithOverride('opencode', 'OpenCode', <OpenCodePanel {...commonProps} />);
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
+      case 'gemini-cli':
+        return wrapWithOverride('gemini-cli', 'Google Gemini', <GeminiPanel {...commonProps} />);
       case 'lmstudio':
         return wrapWithOverride('lmstudio', 'LM Studio', <LMStudioPanel {...commonProps} />);
+      // The antigravity-gemini and antigravity-gemini-agent panels now live in
+      // the gemini-antigravity marketplace extension. When the extension is
+      // installed and enabled, its settings panel is rendered through the
+      // extension settings-panel registry (see ExtensionSettingsPanel). Falling
+      // through here keeps the route a no-op when the extension is uninstalled.
       case 'advanced':
         // AdvancedPanel is self-contained - uses Jotai atoms and IPC directly
         return <AdvancedPanel />;
@@ -928,14 +973,58 @@ export function SettingsView({
           />
         );
       default: {
-        // An extension-contributed agent provider (e.g. antigravity-gemini-agent)
-        // was selected. Its models are usable from the chat model picker; its
-        // configuration lives in the extension, reachable from Installed Extensions.
+        // Dispatch to extension-contributed provider settings panels.
+        // Extensions declare aiProviders[].settingsPanelComponent pointing at
+        // an export under their module's `settingsPanel` record. We look up
+        // the provider contribution by ID (which is also the sidebar category
+        // id), find the matching extension settings-panel component, and
+        // render it with the same commonProps the built-in provider panels
+        // receive (config, apiKeys, availableModels, callbacks). This is how
+        // gemini-antigravity / kimi-code contribute their provider settings
+        // panels without the host having to know about them.
+        const loader = getExtensionLoader();
+        if (loader) {
+          let extensionPanel: React.ReactNode | null = null;
+          for (const entry of loader.getAiProviders()) {
+            if (entry.contribution.id !== selectedCategory) continue;
+            const panelKey = entry.contribution.settingsPanelComponent;
+            if (!panelKey) break;
+            const loaded = loader.getExtension(entry.extensionId);
+            const component = loaded?.module.settingsPanel?.[panelKey];
+            if (!component) {
+              console.warn(
+                `[SettingsView] Extension ${entry.extensionId} declares settingsPanelComponent "${panelKey}" for provider "${entry.contribution.id}" but does not export it`,
+              );
+              break;
+            }
+            // The extension SDK types `settingsPanel` exports as
+            // ComponentType<SettingsPanelProps> (the document/storage panel
+            // shape used by extensions that render workspace-scoped settings).
+            // For aiProviders[].settingsPanelComponent the host actually passes
+            // provider-panel props (config, apiKeys, availableModels, the same
+            // callbacks the built-in provider panels receive), because the
+            // panel needs to drive Test Connection, model selection, and quota
+            // for the provider it belongs to. Cast through unknown to
+            // acknowledge the wider per-provider contract.
+            const ExtPanel = component as unknown as React.ComponentType<typeof commonProps>;
+            extensionPanel = wrapWithOverride(
+              entry.contribution.id,
+              entry.contribution.label,
+              <ExtPanel {...commonProps} />,
+            );
+            break;
+          }
+          if (extensionPanel) {
+            return extensionPanel;
+          }
+        }
+
+        // Fallback: an extension-contributed agent provider (e.g.
+        // antigravity-gemini-agent) was selected but it did not contribute a
+        // settings panel component. Its models are usable from the chat model
+        // picker; configuration lives in the extension, reachable from
+        // Installed Extensions.
         const providerId = String(selectedCategory);
-        // Render the extension's own provider settings panel (declared via
-        // aiAgentProviders[].settingsPanelComponent), wired with the same props the
-        // built-in panels receive. Falls back to the static notice below when the
-        // component is unavailable.
         const extEntry = extAgentProviders.find((pr) => pr.id === providerId);
         if (extEntry) {
           return (

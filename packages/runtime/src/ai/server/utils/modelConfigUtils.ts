@@ -6,6 +6,8 @@
  * to prevent stale model lists from being persisted or transmitted.
  */
 
+import { ProviderRegistry } from '../ProviderRegistry';
+
 /**
  * Removes the `models` field from an object, returning a new object without it.
  * TypeScript will correctly infer the return type as `Omit<T, 'models'>`.
@@ -23,8 +25,26 @@ export function omitModelsField<T extends { models?: any }>(
 
 /**
  * Providers that use dynamic model discovery and should not persist a `models` field.
+ * Kept as the fallback union for processes where the registry isn't populated yet.
+ *
+ * Note: `gemini-cli` was removed from the marketplace in commit 70d6c5c83 (replaced
+ * by the antigravity extension's static catalog), but is retained here so that on
+ * upgrade, any user who had a stale `gemini-cli` config on disk doesn't have its
+ * `models` field re-persisted before the provider is fully retired.
  */
-const DYNAMIC_MODEL_PROVIDERS = ['openai-codex', 'copilot-cli'] as const;
+const DYNAMIC_MODEL_PROVIDERS = ['openai-codex', 'copilot-cli', 'gemini-cli'] as const;
+
+/**
+ * Resolve the set of dynamic-model provider ids. Reads the registry (which
+ * includes extension-contributed providers) and falls back to the hardcoded
+ * union when the registry is empty in this process.
+ */
+function dynamicModelProviderIds(): readonly string[] {
+  const fromRegistry = ProviderRegistry.list()
+    .filter((d) => d.dynamicModels)
+    .map((d) => d.id);
+  return fromRegistry.length > 0 ? fromRegistry : DYNAMIC_MODEL_PROVIDERS;
+}
 
 /**
  * Normalizes provider configurations by removing the `models` field from
@@ -38,7 +58,7 @@ export function normalizeCodexProviderConfig<T extends Record<string, any>>(
   }
 
   let result = providers;
-  for (const providerId of DYNAMIC_MODEL_PROVIDERS) {
+  for (const providerId of dynamicModelProviderIds()) {
     const config = result[providerId];
     if (config && typeof config === 'object' && 'models' in config) {
       result = { ...result, [providerId]: omitModelsField(config) } as T;

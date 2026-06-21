@@ -220,8 +220,15 @@ packages/electron/resources/bundled-extensions/*.nimext
 
 # accidentally-tracked SQLite caches
 packages/electron/data/*.db
-packages/electron/memories.db
 
 # Local RAG/memory-tool artifacts (SQLite stores + caches created in the cwd)
 memories.db
+packages/electron/memories.db
+data/
+packages/electron/data/
 .rag-cache/
+delegation-log.txt
+test_kcs.mjs
+
+# Local Antigravity / Gemini IDE profile cache (not for version control)
+.gemini-profile/

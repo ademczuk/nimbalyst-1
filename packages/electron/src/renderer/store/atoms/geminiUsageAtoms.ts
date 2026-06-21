@@ -79,3 +79,68 @@ export const geminiUsageWeeklyColorAtom = atom((get) => {
   if (util >= 50) return 'yellow';
   return 'green';
 });
+
+// Renderer-side mirror of the `ai.showGeminiUsageIndicator` setting. Kept as an
+// atom so the GeminiPanel and the indicator can read/write the toggle directly;
+// it persists through the same `ai:saveSettings` partial-update path the other
+// usage-indicator toggles use.
+export const geminiUsageIndicatorEnabledAtom = atom<boolean>(true);
+
+let geminiUsageIndicatorPersistTimer: ReturnType<typeof setTimeout> | null = null;
+const GEMINI_USAGE_INDICATOR_PERSIST_DEBOUNCE_MS = 500;
+
+function scheduleGeminiUsageIndicatorPersist(enabled: boolean): void {
+  if (geminiUsageIndicatorPersistTimer) {
+    clearTimeout(geminiUsageIndicatorPersistTimer);
+  }
+  geminiUsageIndicatorPersistTimer = setTimeout(async () => {
+    geminiUsageIndicatorPersistTimer = null;
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      try {
+        // Send only the changed field -- ai:saveSettings handles partial updates
+        await window.electronAPI.aiSaveSettings({ showGeminiUsageIndicator: enabled });
+      } catch (error) {
+        console.error('[geminiUsageAtoms] Failed to save usage indicator setting:', error);
+      }
+    }
+  }, GEMINI_USAGE_INDICATOR_PERSIST_DEBOUNCE_MS);
+}
+
+export const setGeminiUsageIndicatorEnabledAtom = atom(
+  null,
+  (_get, set, enabled: boolean) => {
+    set(geminiUsageIndicatorEnabledAtom, enabled);
+    scheduleGeminiUsageIndicatorPersist(enabled);
+  }
+);
+
+export async function initGeminiUsageIndicatorSetting(): Promise<boolean> {
+  if (typeof window === 'undefined' || !window.electronAPI) {
+    return true;
+  }
+
+  try {
+    const settings = await window.electronAPI.aiGetSettings();
+    return (settings as Record<string, unknown>)?.showGeminiUsageIndicator as boolean ?? true;
+  } catch (error) {
+    console.error('[geminiUsageAtoms] Failed to load usage indicator setting:', error);
+  }
+
+  return true;
+}
+
+/**
+ * Format a token count for the compact gutter display.
+ * e.g. 950 -> "950", 12300 -> "12.3k", 1500000 -> "1.5M".
+ */
+export function formatTokenCount(tokens: number): string {
+  if (tokens < 1000) {
+    return String(tokens);
+  }
+  if (tokens < 1_000_000) {
+    const k = tokens / 1000;
+    return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  const m = tokens / 1_000_000;
+  return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
+}

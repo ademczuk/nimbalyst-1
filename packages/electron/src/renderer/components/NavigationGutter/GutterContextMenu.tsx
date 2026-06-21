@@ -16,10 +16,12 @@ const BUTTON_META: Record<HideableGutterButton, { label: string; icon: string }>
   'sync-status':    { label: 'Sync Status',    icon: 'sync' },
   'theme-toggle':   { label: 'Theme Toggle',   icon: 'dark_mode' },
   'feedback':       { label: 'Feedback',       icon: 'feedback' },
-  'claude-usage':   { label: 'Claude Usage',   icon: 'speed' },
-  'codex-usage':    { label: 'Codex Usage',    icon: 'speed' },
-  'gemini-usage':   { label: 'Gemini Usage',   icon: 'gemini' },
-  'extension-dev':  { label: 'Extension Dev',  icon: 'extension' },
+  'claude-usage':      { label: 'Claude Usage',      icon: 'speed' },
+  'codex-usage':       { label: 'Codex Usage',       icon: 'speed' },
+  'gemini-usage':      { label: 'Gemini Usage',      icon: 'gemini' },
+  'antigravity-usage': { label: 'Antigravity Usage', icon: 'auto_awesome' },
+  'kimi-usage':        { label: 'Kimi Status',       icon: 'kimi' },
+  'extension-dev':     { label: 'Extension Dev',     icon: 'extension' },
 };
 
 interface GutterContextMenuProps {

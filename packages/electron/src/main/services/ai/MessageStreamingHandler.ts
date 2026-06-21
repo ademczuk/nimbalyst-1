@@ -17,6 +17,7 @@ import * as path from 'path';
 import {
   ProviderFactory,
   ModelRegistry,
+  ProviderRegistry,
   isAgentProvider,
   onAgentMessageBatch,
   buildMetaAgentSystemPrompt,
@@ -81,6 +82,7 @@ import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { getMetaAgentOpenAITools } from '../../mcp/metaAgentServer';
 import { getDevAgentOpenAITools, resolveDevToolScope } from '../../mcp/devAgentTools';
 import { MetaAgentService } from '../MetaAgentService';
+import { getGeminiUsageService } from '../GeminiUsageService';
 import {
   shouldShowCommunityPopup,
   markCommunityPopupShown,
@@ -299,6 +301,12 @@ export class MessageStreamingHandler {
     sessionId?: string,
     workspacePath?: string,
   ) => {
+    // Single entry log so we can confirm the IPC reached this handler. Previously,
+    // when antigravity-gemini-agent silently produced no response, there was no
+    // way to tell whether the IPC arrived at all -- the first existing log only
+    // fired hundreds of lines deeper inside the happy path.
+    logger.main.info(`[AIService] ai:sendMessage entry: sessionId=${sessionId} messageLen=${message.length} workspacePath=${workspacePath ?? 'unset'} hasDocCtx=${!!documentContext}`);
+
     // Check for queued prompt deduplication - prevents duplicate execution from multiple renderer panels
     const queuedPromptId = (documentContext as any)?.queuedPromptId as string | undefined;
     if (queuedPromptId) {
@@ -458,9 +466,10 @@ export class MessageStreamingHandler {
       // Get the correct API key based on provider
       let apiKey: string | undefined;
       let errorMessage = 'API key not configured';
-      let requiresApiKey = true;
       const effectiveWorkspacePath = session.workspacePath || workspacePath;
       apiKey = this.svc.getApiKeyForProvider(session.provider, effectiveWorkspacePath);
+
+      let requiresApiKey = true;
 
       // Resolve the extension-agent ref (null for built-in providers). The
       // built-in switch below is the legacy path; the registry lookup is the
@@ -509,8 +518,19 @@ export class MessageStreamingHandler {
             // LMStudio doesn't need an API key, just the base URL
             apiKey = 'not-required'; // Dummy value since LMStudio doesn't need a key
             break;
-          default:
-            throw new Error(`Unknown provider: ${session.provider}`);
+          default: {
+            // Extension-contributed chat providers (e.g. the marketplace
+            // kimi-code / antigravity-gemini chat providers) are not in the
+            // built-in switch and are not agent contributions, so they fall
+            // through here. Resolve their key requirement from the provider
+            // registry instead of throwing "Unknown provider".
+            const providerDescriptor = ProviderRegistry.get(session.provider);
+            if (providerDescriptor) {
+              requiresApiKey = providerDescriptor.requiresApiKey;
+            } else {
+              throw new Error(`Unknown provider: ${session.provider}`);
+            }
+          }
         }
       }
 
@@ -539,10 +559,8 @@ export class MessageStreamingHandler {
             model: session.model,
           });
       } else {
-        // The inner switch above is exhaustive over AIProviderType + throws on
-        // default, so by this point session.provider is statically narrowable
-        // to AIProviderType. The cast makes the narrowing explicit since the
-        // exhaustiveness sits inside a conditional block.
+        // Built-in providers and registry-contributed chat providers both
+        // resolve through the registry-driven factory.
         provider = ProviderFactory.createProvider(session.provider as AIProviderType, session.id);
       }
 
@@ -2085,6 +2103,13 @@ export class MessageStreamingHandler {
 
             // Capture token usage if available
             const tokenUsage = chunk.usage;
+            // Feed cumulative Gemini token meter (Gemini has only per-turn counts).
+            if (session.provider === 'gemini-cli' && tokenUsage) {
+              getGeminiUsageService().record({
+                input_tokens: tokenUsage.input_tokens,
+                output_tokens: tokenUsage.output_tokens,
+              });
+            }
             // Capture modelUsage for claude-code provider (provides per-model breakdown with input/output tokens)
             const modelUsage = chunk.modelUsage;
             // Context fill from last assistant message (actual tokens in context window)

@@ -17,6 +17,10 @@
  * Mirrors CodexUsageService 1:1 in structure: same poll cadence, idle sleep,
  * cached snapshot, broadcast pattern. The only differences are the data source
  * (RPC instead of file scan) and the channel name ('gemini-usage:update').
+ *
+ * It also keeps a lightweight cumulative per-turn token meter for the legacy
+ * 'gemini-cli' session path: MessageStreamingHandler feeds per-turn token
+ * counts through `record()`, surfaced on the optional `tokenUsage` block.
  */
 
 import { BrowserWindow } from 'electron';
@@ -100,6 +104,8 @@ class GeminiUsageServiceImpl {
   private lastActivityTime: number = 0;
   private isPolling: boolean = false;
   private isSleeping: boolean = true;
+  // Cumulative per-turn token total for the legacy 'gemini-cli' meter.
+  private cumulativeTokens: number = 0;
 
   initialize(): void {
     logger.main.info('[GeminiUsageService] Initialized (sleeping until activity detected)');
@@ -117,6 +123,31 @@ class GeminiUsageServiceImpl {
 
   getCachedUsage(): GeminiUsageData | null {
     return this.cachedUsage;
+  }
+
+  /**
+   * Legacy 'gemini-cli' per-turn token meter. The genuine antigravity usage
+   * comes from the polling path above; this only accumulates the per-turn
+   * token counts the gemini-cli streaming path emits and surfaces them on the
+   * optional `tokenUsage` block of the cached usage so the chip can show a
+   * running total even before a quota snapshot is available.
+   */
+  record(usage: { input_tokens?: number; output_tokens?: number }): void {
+    const inputTokens = typeof usage?.input_tokens === 'number' ? usage.input_tokens : 0;
+    const outputTokens = typeof usage?.output_tokens === 'number' ? usage.output_tokens : 0;
+    const lastTokens = inputTokens + outputTokens;
+    this.cumulativeTokens += lastTokens;
+
+    const base: GeminiUsageData =
+      this.cachedUsage ?? this.makeUnavailable('Gemini usage data unavailable');
+    this.cachedUsage = {
+      ...base,
+      tokenUsage: {
+        totalTokens: this.cumulativeTokens,
+        lastTokens,
+      },
+    };
+    this.broadcastUpdate();
   }
 
   async refresh(): Promise<GeminiUsageData> {
@@ -327,3 +358,11 @@ class GeminiUsageServiceImpl {
 
 // Singleton instance
 export const geminiUsageService = new GeminiUsageServiceImpl();
+
+/**
+ * Getter form kept for the legacy 'gemini-cli' token-meter call site in
+ * MessageStreamingHandler. Returns the same singleton.
+ */
+export function getGeminiUsageService(): GeminiUsageServiceImpl {
+  return geminiUsageService;
+}

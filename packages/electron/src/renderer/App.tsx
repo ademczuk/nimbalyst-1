@@ -97,6 +97,7 @@ import { initOpenProjects } from './store/atoms/openProjects';
 import { initWorkspaceStatePruner } from './store/workspaceStatePruner';
 import { initActionPromptListeners } from './store/listeners/actionPromptListeners';
 import { initAiCommandListeners } from './store/listeners/aiCommandListeners';
+import { initAiSettingsListeners } from './store/listeners/aiSettingsListeners';
 import { initAppCommandListeners } from './store/listeners/appCommandListeners';
 import { initClaudeUsageListeners } from './store/listeners/claudeUsageListeners';
 import { initClaudeCliTerminalListeners } from './store/listeners/claudeCliTerminalListeners';
@@ -302,6 +303,7 @@ export default function App() {
 
     const cleanupActionPrompts = initActionPromptListeners();
     const cleanupAiCommands = initAiCommandListeners();
+    const cleanupAiSettings = initAiSettingsListeners();
     const cleanupAppCommands = initAppCommandListeners();
     const cleanupClaude = initClaudeUsageListeners();
     const cleanupClaudeCliTerminal = initClaudeCliTerminalListeners();
@@ -330,6 +332,7 @@ export default function App() {
     return () => {
       cleanupActionPrompts?.();
       cleanupAiCommands?.();
+      cleanupAiSettings?.();
       cleanupAppCommands?.();
       cleanupClaude?.();
       cleanupClaudeCliTerminal?.();
@@ -523,6 +526,26 @@ export default function App() {
   const setActiveMode = useSetAtom(setWindowModeAtom);
   const toggleAgentCollapsed = useSetAtom(toggleSessionHistoryCollapsedAtom);
   const updateDeveloperSettings = useSetAtom(setDeveloperFeatureSettingsAtom);
+
+  // 2026-05-18: External session-creation listener. The control plane
+  // (packages/electron/src/main/mcp/controlRoutes.ts) fires the
+  // `sessions:invalidate` IPC after AISessionsRepository.create runs
+  // outside the renderer (e.g. via nimbalyst-mcp sidecar or curl). Run
+  // refreshSessionListAtom to pull the new session into the sidebar
+  // without losing transcript scroll / composer text / expanded panes.
+  // The reason / sessionId / workspaceId payload is informational only;
+  // we always do a full refresh because partial-update logic would
+  // duplicate sessionRegistryAtom write semantics for marginal benefit.
+  const refreshSessionListFromInvalidate = useSetAtom(refreshSessionListAtom);
+  useEffect(() => {
+    const off = window.electronAPI.onSessionsInvalidate((data) => {
+      console.log('[App] sessions:invalidate received', data);
+      refreshSessionListFromInvalidate();
+    });
+    return () => {
+      try { off?.(); } catch { /* listener already gone */ }
+    };
+  }, [refreshSessionListFromInvalidate]);
   // Keep a ref for use in callbacks that might have stale closures
   const activeModeStateRef = useRef<ContentMode>(activeMode);
   useEffect(() => {
