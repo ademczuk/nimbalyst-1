@@ -509,6 +509,15 @@ export class MessageStreamingHandler {
             // LMStudio doesn't need an API key, just the base URL
             apiKey = 'not-required'; // Dummy value since LMStudio doesn't need a key
             break;
+          case 'kimiclaw':
+            // KimiClaw uses local HTTP bridge auth (cookie/bearer), no API key needed
+            requiresApiKey = false;
+            break;
+          case 'anismin':
+          case 'meridian':
+            // OpenClaw brains use their own local OAuth; no API key needed.
+            requiresApiKey = false;
+            break;
           default:
             throw new Error(`Unknown provider: ${session.provider}`);
         }

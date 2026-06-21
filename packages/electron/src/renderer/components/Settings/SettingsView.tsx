@@ -13,8 +13,10 @@ import { ClaudeCodePanel } from '../GlobalSettings/panels/ClaudeCodePanel';
 import { OpenAIPanel } from '../GlobalSettings/panels/OpenAIPanel';
 import { OpenAICodexPanel } from '../GlobalSettings/panels/OpenAICodexPanel';
 import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
+import { KimiClawPanel } from '../GlobalSettings/panels/KimiClawPanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
 import { LMStudioPanel } from '../GlobalSettings/panels/LMStudioPanel';
+import { OpenClawBrainPanel } from '../GlobalSettings/panels/OpenClawBrainPanel';
 import { AdvancedPanel } from '../GlobalSettings/panels/AdvancedPanel';
 import { DatabasePanel } from '../GlobalSettings/panels/DatabasePanel';
 import { AgentFeaturesPanel } from './AgentFeaturesPanel';
@@ -832,10 +834,30 @@ export function SettingsView({
         return wrapWithOverride('openai-codex', 'OpenAI Codex', <OpenAICodexPanel {...commonProps} />);
       case 'opencode':
         return wrapWithOverride('opencode', 'OpenCode', <OpenCodePanel {...commonProps} />);
+      case 'kimiclaw':
+        return wrapWithOverride('kimiclaw', 'KimiClaw', <KimiClawPanel {...commonProps} />);
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
       case 'lmstudio':
         return wrapWithOverride('lmstudio', 'LM Studio', <LMStudioPanel {...commonProps} />);
+      case 'anismin':
+        return wrapWithOverride('anismin', 'Anismin (OpenClaw)', (
+          <OpenClawBrainPanel
+            {...commonProps}
+            brainName="Anismin (OpenClaw)"
+            brainDescription="Single-brain chat with Anismin, the local Claude Opus 4.7 brain on the OpenClaw stack. One prompt, one reply — no swarm. Ensure the Anismin brain process is running."
+            defaultEndpoint="http://127.0.0.1:18889/api/chat"
+          />
+        ));
+      case 'meridian':
+        return wrapWithOverride('meridian', 'Meridian (Hermes)', (
+          <OpenClawBrainPanel
+            {...commonProps}
+            brainName="Meridian (Hermes)"
+            brainDescription="Single-brain chat with Meridian, the local gpt-5.4 brain on the OpenClaw/Hermes stack. One prompt, one reply — no swarm. Ensure the Meridian brain process is running."
+            defaultEndpoint="http://127.0.0.1:18890/api/chat"
+          />
+        ));
       case 'advanced':
         // AdvancedPanel is self-contained - uses Jotai atoms and IPC directly
         return <AdvancedPanel />;

@@ -12,6 +12,8 @@ export * from './providers/ProviderPermissionMixin';
 export * from './providers/LMStudioProvider';
 export * from './providers/OpenCodeProvider';
 export * from './providers/CopilotCLIProvider';
+export * from './providers/KimiClawProvider';
+export * from './protocols/KimiClawProtocol';
 export * from './utils/errorDetection';
 export * from './preferredAgentLanguageConfig';
 export { McpConfigService } from './services/McpConfigService';

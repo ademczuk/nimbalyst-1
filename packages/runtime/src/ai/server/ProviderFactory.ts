@@ -13,6 +13,9 @@ import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
 import { ExtensionAgentProvider } from './providers/ExtensionAgentProvider';
+import { KimiClawProvider } from './providers/KimiClawProvider';
+import { AnisminProvider } from './providers/AnisminProvider';
+import { MeridianProvider } from './providers/MeridianProvider';
 import { ProviderConfig, AIProviderType, assertExhaustiveProvider } from './types';
 
 export class ProviderFactory {
@@ -74,6 +77,15 @@ export class ProviderFactory {
         break;
       case 'opencode':
         provider = new OpenCodeProvider();
+        break;
+      case 'kimiclaw':
+        provider = new KimiClawProvider();
+        break;
+      case 'anismin':
+        provider = new AnisminProvider();
+        break;
+      case 'meridian':
+        provider = new MeridianProvider();
         break;
       case 'lmstudio':
         provider = new LMStudioProvider();

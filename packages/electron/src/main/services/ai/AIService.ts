@@ -160,6 +160,45 @@ export class AIService {
   // Owns the streaming send-message lifecycle (extracted from setupIpcHandlers).
   private streamingHandler: MessageStreamingHandler;
 
+  /**
+   * 2026-05-18: public entrypoint for controlRoutes.ts (external automation).
+   *
+   * Mirrors the ai:sendMessage IPC handler at line 1756 but accepts an
+   * explicit workspacePath instead of resolving it from the calling
+   * window's state — the control plane has no renderer window so the
+   * usual `windowStates.get(event.sender.id)` lookup fails. We fake an
+   * IpcMainInvokeEvent whose sender.send is a no-op (the streaming
+   * chunks are routed to the renderer for live transcript updates;
+   * external callers don't need them — the provider writes all
+   * authoritative state back to ai_agent_messages so polling
+   * AgentMessagesRepository.list gives the same answer).
+   *
+   * Returns when the provider's sendMessage call resolves, which
+   * means the final message has been persisted. Callers can either
+   * await this (synchronous-from-their-perspective) or fire-and-forget
+   * and poll the transcript route.
+   */
+  async dispatchExternal(
+    prompt: string,
+    sessionId: string,
+    workspacePath: string,
+  ): Promise<{ content: string }> {
+    const fakeEvent = {
+      sender: {
+        id: -1,
+        send: () => { /* no-op: external caller doesn't consume stream */ },
+        isDestroyed: () => false,
+      },
+    } as unknown as Electron.IpcMainInvokeEvent;
+    return this.streamingHandler.handle(
+      fakeEvent,
+      prompt,
+      undefined,
+      sessionId,
+      workspacePath,
+    );
+  }
+
   constructor(sessionStore: SessionStore) {
     logger.main.info('[AIService] Constructor called');
     this.sessionManager = new SessionManager(sessionStore);
@@ -1709,6 +1748,13 @@ export class AIService {
           case 'lmstudio':
             // LMStudio doesn't need an API key, just the base URL
             break;
+          case 'kimiclaw':
+            // KimiClaw uses local HTTP bridge auth (cookie/bearer), no API key needed
+            break;
+          case 'anismin':
+          case 'meridian':
+            // OpenClaw brains use their own local OAuth; no API key needed.
+            break;
           default:
             throw new Error(`Unknown provider: ${provider}`);
         }
@@ -3026,6 +3072,15 @@ export class AIService {
             // LMStudio doesn't need an API key, just test the connection
             apiKey = 'not-required';
             break;
+          case 'kimiclaw':
+            // KimiClaw uses local HTTP bridge, no API key needed
+            apiKey = 'not-required';
+            break;
+          case 'anismin':
+          case 'meridian':
+            // OpenClaw brains use their own local OAuth; no API key needed.
+            apiKey = 'not-required';
+            break;
           default:
             return { success: false, error: `Unknown provider: ${provider}` };
         }
@@ -3196,6 +3251,22 @@ export class AIService {
           const response = await fetch(`${baseUrl}/v1/models`);
           if (!response.ok) {
             throw new Error(`LMStudio server not responding at ${baseUrl}`);
+          }
+        }
+
+        // For KimiClaw, test the bridge via checkInstallation
+        if (provider === 'kimiclaw') {
+          const providerSettings = this.getSettingsStore().get('providerSettings', {}) as any;
+          const kcConfig = providerSettings['kimiclaw'] || {};
+          const { KimiClawProvider } = await import('@nimbalyst/runtime/ai/server/providers/KimiClawProvider');
+          const testProvider = new KimiClawProvider();
+          await testProvider.initialize({
+            model: kcConfig.model || 'kimi-code/kimi-for-coding',
+            ...kcConfig,
+          });
+          const result = await testProvider.checkInstallation();
+          if (!result.installed) {
+            throw new Error(result.details || 'KimiClaw bridge not reachable');
           }
         }
 
@@ -3380,6 +3451,17 @@ export class AIService {
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
           models: providerSettings['lmstudio']?.models
+        },
+        'kimiclaw': {
+          enabled: providerSettings['kimiclaw']?.enabled === true,
+        },
+        'anismin': {
+          // Anismin brain uses its own local OpenClaw OAuth; no API key.
+          enabled: providerSettings['anismin']?.enabled === true,
+        },
+        'meridian': {
+          // Meridian brain uses its own local OpenClaw OAuth; no API key.
+          enabled: providerSettings['meridian']?.enabled === true,
         }
       };
 

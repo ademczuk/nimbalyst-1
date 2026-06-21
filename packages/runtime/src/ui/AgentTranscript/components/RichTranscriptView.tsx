@@ -411,6 +411,31 @@ const PermissionDeniedCard: React.FC<{
   );
 };
 
+/**
+ * Compact one-line renderer for ephemeral progress events
+ * (systemType: 'status' or 'init'). KCS uses these heavily for the
+ * cascade tier ticker (trying codex... codex failed... claude_cli
+ * succeeded in 43s) and per-agent dividers. Rendering them all as
+ * collapsed SystemReminderCards turns the transcript into a wall of
+ * "SYSTEM REMINDER" rows that hide the actual signal.
+ */
+const StatusLine: React.FC<{ message: TranscriptViewMessage }> = ({ message }) => {
+  const text = (message.text ?? '').trim();
+  if (!text) return null;
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-0.5 ml-6 text-[11px] text-[var(--nim-text-faint)] leading-snug"
+      title={text}
+    >
+      <span className="shrink-0 select-none" aria-hidden="true">·</span>
+      <span className="flex-1 min-w-0 truncate">{text}</span>
+      <span className="shrink-0 text-[10px] opacity-70">
+        {formatMessageTime(message.createdAt?.getTime() ?? 0)}
+      </span>
+    </div>
+  );
+};
+
 const SystemReminderCard: React.FC<{
   message: TranscriptViewMessage;
 }> = ({ message }) => {

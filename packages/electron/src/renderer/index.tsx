@@ -1,5 +1,21 @@
 // console.log('[RENDERER] index.tsx executing at', new Date().toISOString());
 
+// Forward uncaught renderer errors and unhandled promise rejections to
+// console.error so the main-process console-message handler writes them
+// into nimbalyst-debug.log. Without this, a renderer crash before React
+// mounts shows as a silent blank window with nothing logged.
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e: ErrorEvent) => {
+    const stack = e.error && e.error.stack ? e.error.stack : '';
+    console.error(`[RENDERER UNCAUGHT] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}\n${stack}`);
+  });
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const reason: any = e.reason;
+    const detail = reason && reason.stack ? reason.stack : String(reason);
+    console.error(`[RENDERER UNHANDLED PROMISE] ${detail}`);
+  });
+}
+
 // Check if this is the hidden capture window (used for flash-free offscreen screenshots).
 // The capture window loads the same renderer URL with ?mode=capture but skips all heavy
 // initialization (Monaco, PostHog, React, settings). It only sets up the offscreen editor

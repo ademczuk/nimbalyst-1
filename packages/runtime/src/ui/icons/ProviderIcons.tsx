@@ -14,6 +14,11 @@ const PROVIDER_ICON_MAP: Record<string, string> = {
   // Gemini Antigravity extension provider -> Gemini brand glyph.
   'antigravity-gemini-agent': 'gemini',
   'antigravity-gemini': 'gemini',
+  'kimiclaw': 'hive',
+  // Single-brain OpenClaw chat providers. Anismin = deep-sea brain;
+  // Meridian = navigation/compass (the narwhal navigator).
+  'anismin': 'psychology',
+  'meridian': 'explore',
 };
 
 export function resolveProviderIcon(provider: string): string {

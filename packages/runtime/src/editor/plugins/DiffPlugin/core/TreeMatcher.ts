@@ -163,6 +163,13 @@ export class WindowedTreeMatcher {
   private sourceRootChildren: CanonicalTreeNode[] = [];
   private targetRootChildren: CanonicalTreeNode[] = [];
 
+  // Tracks "no insertion anchor found" events within a single matchCanonicalNodes
+  // call. Without this, each unmatched target produces one console.error, and a
+  // typical "paste large doc into empty editor" diff floods the renderer with
+  // 200+ identical CRITICAL warnings. Reset on each matchCanonicalNodes entry,
+  // flushed once as a summary before returning.
+  private noAnchorTargetIndices: number[] = [];
+
   constructor(
     sourceEditor: LexicalEditor,
     targetEditor: LexicalEditor,
@@ -327,6 +334,10 @@ export class WindowedTreeMatcher {
     sourceNodes: CanonicalTreeNode[],
     targetNodes: CanonicalTreeNode[],
   ): WindowedMatchResult {
+    // Reset per-call no-anchor accounting before any work begins so a recursive
+    // sub-tree diff doesn't accumulate counts from a sibling call's tally.
+    this.noAnchorTargetIndices = [];
+
     // Create root nodes for diffTrees
     const sourceRoot: CanonicalTreeNode = {
       id: -1,
@@ -841,6 +852,14 @@ export class WindowedTreeMatcher {
       console.log(`\nSkipped exact matches: ${sourceNodes.length + targetNodes.length - diffs.length - sourceNodes.length - targetNodes.length + diffs.filter(d => d.changeType === 'update').length}`);
     }
 
+    // Collapse any "no insertion anchor" events into a single summary log
+    // before returning, instead of 200+ per-node console.error lines.
+    this.flushNoAnchorSummary(
+      sourceNodes.length,
+      targetNodes.length,
+      targetToSource,
+    );
+
     return {diffs, sequence};
   }
 
@@ -864,15 +883,80 @@ export class WindowedTreeMatcher {
       }
     }
 
-    // WARNING: No anchor found - defaulting to append at document end
-    // This can cause content duplication if matching quality is poor
-    console.error(
-      `[TreeMatcher] CRITICAL: No insertion anchor found for targetIdx=${targetIdx}. ` +
-      `Tree matcher failed to find any matched nodes before or after this position. ` +
-      `Defaulting to insert at document end (sourceLength=${sourceLength}). ` +
-      `This WILL cause content duplication if this node should have matched existing content.`
-    );
+    // No anchor found - defaulting to append at document end. Don't log here;
+    // the matchCanonicalNodes caller flushes a single summary once it knows
+    // whether the run was a benign bulk insert (target paste into ~empty
+    // source) or a genuinely suspicious failure (source had real content but
+    // matching still failed for every unmatched target).
+    this.noAnchorTargetIndices.push(targetIdx);
     return sourceLength;
+  }
+
+  /**
+   * Emit a single summary log line for any "no insertion anchor" events
+   * collected during the just-completed matchCanonicalNodes call.
+   *
+   * Severity:
+   *   - INFO  -> bulk insert into essentially empty source (sourceLength <= 1
+   *             AND no source matches survived); this is the normal "paste a
+   *             large doc into a fresh editor" case and the document-end
+   *             insert path is correct
+   *   - WARN  -> small N of fallbacks in a doc that did match elsewhere; the
+   *             fallback path is working, but a few targets had no anchor
+   *   - ERROR -> source had real content (sourceLength > 1) AND the matcher
+   *             produced zero matches AND multiple targets fell through; this
+   *             is the duplication-risk case the original CRITICAL was for
+   */
+  private flushNoAnchorSummary(
+    sourceLength: number,
+    targetLength: number,
+    targetToSource: Map<number, number>,
+  ): void {
+    const indices = this.noAnchorTargetIndices;
+    if (indices.length === 0) return;
+
+    const count = indices.length;
+    const first = indices[0];
+    const last = indices[count - 1];
+    const range = count === 1 ? `idx ${first}` : `idx ${first}..${last}`;
+    const matchedAnchors = targetToSource.size;
+
+    // sourceLength <= 1 covers both the "fresh editor" case (sourceLength=0)
+    // and the "single root child" case the user's log shows (sourceLength=1).
+    // matchedAnchors === 0 confirms nothing in the source ended up paired,
+    // which is what makes the per-node anchor search guaranteed to fail.
+    const isBulkInsertIntoEmpty = sourceLength <= 1 && matchedAnchors === 0;
+    const isSuspicious =
+      sourceLength > 1 && matchedAnchors === 0 && count > 1;
+
+    if (isBulkInsertIntoEmpty) {
+      console.info(
+        `[TreeMatcher] Bulk insert into empty source: ${count} target nodes ` +
+        `had no anchor (${range}, sourceLength=${sourceLength}, ` +
+        `targetLength=${targetLength}). Appending all at document end; this ` +
+        `is the expected path for "paste into fresh editor" diffs.`
+      );
+      return;
+    }
+
+    if (isSuspicious) {
+      console.error(
+        `[TreeMatcher] CRITICAL: ${count} target nodes had no insertion ` +
+        `anchor (${range}) despite source having ${sourceLength} nodes and ` +
+        `zero source matches surviving. Defaulting all to document end. ` +
+        `This WILL cause content duplication if these targets should have ` +
+        `matched existing content.`
+      );
+      return;
+    }
+
+    // Fallback path is working but a few targets had no anchor. WARN-level so
+    // it's still visible in the renderer console without flooding it.
+    console.warn(
+      `[TreeMatcher] ${count} target node(s) had no insertion anchor ` +
+      `(${range}, sourceLength=${sourceLength}, targetLength=${targetLength}, ` +
+      `matchedAnchors=${matchedAnchors}). Defaulted to document end.`
+    );
   }
 
   shouldRecursivelyDiff(match: NodeDiff): boolean {

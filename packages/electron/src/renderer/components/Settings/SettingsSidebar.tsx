@@ -13,7 +13,10 @@ export type SettingsCategory =
   | 'openai-codex'
   | 'opencode'
   | 'copilot-cli'
+  | 'kimiclaw'
   | 'lmstudio'
+  | 'anismin'
+  | 'meridian'
   | 'notifications'
   | 'voice-mode'
   | 'sync'
@@ -203,10 +206,31 @@ Best for complex coding tasks.`,
           isAlpha: true,
         },
         {
+          id: 'kimiclaw',
+          name: 'KimiClaw',
+          icon: getProviderIcon('kimiclaw', { size: 16 }),
+          statusDot: getStatusDot('kimiclaw'),
+          isAlpha: true,
+        },
+        {
           id: 'copilot-cli',
           name: 'GitHub Copilot',
           icon: <MaterialSymbol icon="terminal" size={16} />,
           statusDot: getStatusDot('copilot-cli'),
+          isAlpha: true,
+        },
+        {
+          id: 'anismin',
+          name: 'Anismin (OpenClaw)',
+          icon: getProviderIcon('anismin', { size: 16 }),
+          statusDot: getStatusDot('anismin'),
+          isAlpha: true,
+        },
+        {
+          id: 'meridian',
+          name: 'Meridian (Hermes)',
+          icon: getProviderIcon('meridian', { size: 16 }),
+          statusDot: getStatusDot('meridian'),
           isAlpha: true,
         },
         ...extAgentItems,

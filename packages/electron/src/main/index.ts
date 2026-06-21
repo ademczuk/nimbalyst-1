@@ -76,6 +76,7 @@ import {
 import { getAIProviderOverridesWithWorktreeFallback } from './utils/aiSettingsMerge';
 import { registerMCPConfigHandlers } from './ipc/MCPConfigHandlers';
 import { getOpenCodeConfigService, registerOpenCodeConfigHandlers } from './ipc/OpenCodeConfigHandlers';
+import { registerKimiClawSessionHandlers } from './ipc/KimiClawSessionHandlers';
 import { registerClaudeCodePluginHandlers } from './ipc/ClaudeCodePluginHandlers';
 import { registerExportHandlers } from './ipc/ExportHandlers';
 import { registerShareHandlers } from './ipc/ShareHandlers';
@@ -357,6 +358,14 @@ function checkClaudeCodeInstallationOnFirstLaunch(): void {
 
 // AI service instance
 let aiService: AIService | null = null;
+
+// 2026-05-18: exposed for controlRoutes.ts so external automation can
+// dispatch sessions through the canonical streamingHandler path without
+// requiring the renderer to have the session open. Returns null during
+// startup before the service is constructed; callers must handle.
+export function getAIServiceForControlPlane(): AIService | null {
+  return aiService;
+}
 let runtimeSessionStore: SessionStore | null = null;
 let mcpHttpServer: any = null;
 let mcpConfigService: MCPConfigService | null = null;
@@ -1447,6 +1456,7 @@ app.whenReady().then(async () => {
     registerSuperLoopHandlers();
     registerMCPConfigHandlers();
     registerOpenCodeConfigHandlers();
+    registerKimiClawSessionHandlers();
     registerClaudeCodePluginHandlers();
     const activeSqlite = database.getActiveSQLiteDatabase();
     if (database.getEngine() === 'sqlite' && activeSqlite) {
@@ -2094,6 +2104,19 @@ app.whenReady().then(async () => {
             });
         } catch (descriptorError) {
             logger.mcp.error('Failed to publish MCP endpoint descriptor:', descriptorError);
+        }
+
+        // 2026-05-18: control plane discovery. Write the per-launch
+        // bearer token + actual listening port to userData files so
+        // the nimbalyst-mcp sidecar (and ad-hoc curl scripts) can
+        // hand-shake without a separate exchange. Files are mode
+        // 0o600. Best-effort: a write failure is logged but doesn't
+        // gate startup.
+        try {
+            const { writeControlPlaneDiscoveryFiles } = await import('./mcp/controlRoutes');
+            writeControlPlaneDiscoveryFiles(result.port);
+        } catch (controlErr) {
+            logger.mcp.warn('[control] discovery file write failed:', controlErr);
         }
     } catch (error) {
             logger.mcp.error('Failed to start MCP SSE server:', error);
