@@ -188,6 +188,12 @@ export class AIService {
         id: -1,
         send: () => { /* no-op: external caller doesn't consume stream */ },
         isDestroyed: () => false,
+        // Headless dispatch has no owning window. Downstream window-focus /
+        // notification paths call getOwnerBrowserWindow() on the sender; stub
+        // it (returns null) so the canonical control-plane dispatch used by
+        // nimbalyst-mcp / nimbalyst-research does not throw at completion and
+        // leave the turn stuck "thinking".
+        getOwnerBrowserWindow: () => null,
       },
     } as unknown as Electron.IpcMainInvokeEvent;
     return this.streamingHandler.handle(

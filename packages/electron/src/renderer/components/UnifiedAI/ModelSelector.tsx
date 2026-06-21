@@ -13,7 +13,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
 import { isAgentProvider, shouldBlockStartedSessionProviderSwitch } from '@nimbalyst/runtime/ai/server/types';
-import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
+import { getClaudeCodeModelLabel, getModelDisplayName } from '../../utils/modelUtils';
 import { providersAtom } from '../../store/atoms/appSettings';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { navigateToSettingsAtom } from '../../store/atoms/settingsNavigation';
@@ -160,8 +160,14 @@ export function ModelSelector({
     if (currentModel.startsWith('claude-code')) {
       return getClaudeCodeModelLabel(currentModel);
     }
-    const [, ...modelParts] = currentModel.split(':');
-    return modelParts.join(':') || currentModel;
+    const [provider, ...modelParts] = currentModel.split(':');
+    const modelSuffix = modelParts.join(':');
+    // Brain/agent providers (anismin, meridian, kimiclaw) are identified by the
+    // agent, not the raw model id. When their model is absent from the loaded
+    // model map, show the agent name (e.g. "Anismin") instead of "opus-4-7".
+    const friendly = getModelDisplayName(provider, modelSuffix);
+    if (friendly && friendly !== modelSuffix) return friendly;
+    return modelSuffix || currentModel;
   };
 
   const getProviderLabel = (provider: string) => {

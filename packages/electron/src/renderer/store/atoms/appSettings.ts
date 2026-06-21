@@ -1116,6 +1116,8 @@ const defaultProviders: Record<string, ProviderConfig> = {
   'copilot-cli': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
   kimiclaw: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  anismin: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  meridian: { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
 };
 
 /**

@@ -127,16 +127,16 @@ export abstract class OpenClawBrainProvider extends BaseAIProvider {
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        yield { type: 'error', content: `${this.brainLabel()} HTTP ${resp.status}: ${text.slice(0, 300)}` };
+        yield { type: 'error', error: `${this.brainLabel()} HTTP ${resp.status}: ${text.slice(0, 300)}` };
         yield { type: 'complete', isComplete: true };
         return;
       }
       body = await resp.json();
     } catch (err: any) {
       if (err?.name === 'AbortError') {
-        yield { type: 'error', content: `${this.brainLabel()} request aborted` };
+        yield { type: 'error', error: `${this.brainLabel()} request aborted` };
       } else {
-        yield { type: 'error', content: `${this.brainLabel()} request failed: ${String(err?.message || err)}` };
+        yield { type: 'error', error: `${this.brainLabel()} request failed: ${String(err?.message || err)}` };
       }
       yield { type: 'complete', isComplete: true };
       return;
@@ -145,7 +145,7 @@ export abstract class OpenClawBrainProvider extends BaseAIProvider {
     // Contract: {ok, reply, model, intent, task_id, error}
     if (!body?.ok) {
       const errMsg = body?.error || 'brain returned ok=false';
-      yield { type: 'error', content: `${this.brainLabel()}: ${errMsg}` };
+      yield { type: 'error', error: `${this.brainLabel()}: ${errMsg}` };
       yield { type: 'complete', isComplete: true };
       return;
     }

@@ -163,6 +163,9 @@ export function getProviderDisplayName(provider: string): string {
     case 'openai': return 'OpenAI';
     case 'lmstudio': return 'LMStudio';
     case 'copilot-cli': return 'GitHub Copilot';
+    case 'kimiclaw': return 'KimiClaw';
+    case 'anismin': return 'Anismin';
+    case 'meridian': return 'Meridian';
     default: return provider;
   }
 }
@@ -206,6 +209,13 @@ export function getModelDisplayName(provider: string, modelId: string): string {
       .replace(/-Q[0-9]_K_[A-Z]/i, '')
       .replace(/[-_]/g, ' ')
       .replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+  // Brain/agent providers (kimiclaw, anismin, meridian) are identified by the
+  // agent, not the underlying model id. Show the agent name rather than the raw
+  // model so a session reads "Anismin" instead of "opus-4-7".
+  if (provider === 'kimiclaw' || provider === 'anismin' || provider === 'meridian') {
+    return getProviderDisplayName(provider);
   }
 
   return modelId;
